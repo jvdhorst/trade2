@@ -18,7 +18,11 @@ dependencies = [
 valuation = "valuation.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "scipy>=1.18.1",
+]
 
 [build-system]
 requires = ["hatchling"]

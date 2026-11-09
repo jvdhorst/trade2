@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     pc.add_argument("--as-of", type=date.fromisoformat, default=date.today())
     pc.add_argument("--tolerance", type=float, default=None)
     pc.add_argument("--issuer", action="store_true",
-                    help="compare against issuer-reported BVPS (universe/issuer_sources.csv)")
+                    help="compare against issuer BVPS and ROE (universe/issuer_sources.csv)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 

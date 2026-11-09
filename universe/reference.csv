@@ -1,0 +1,15 @@
+ticker,exchange,cik,share_classes,share_conversion,note
+RY.TO,TSX,,1,1,bank with preferreds/LRCNs
+TD.TO,TSX,,1,1,bank with preferreds
+BNS.TO,TSX,,1,1,bank with preferreds
+MFC.TO,TSX,,1,1,insurer
+ENB.TO,TSX,,1,1,pipeline with preferreds
+CNQ.TO,TSX,,1,1,energy
+ABX.TO,TSX,,1,1,reports in USD
+NTR.TO,TSX,,1,1,reports in USD
+BN.TO,TSX,,2,1,multi-class and large NCI
+SHOP.TO,TSX,,1,1,asset-light and reports in USD
+JPM,NYSE,0000019617,1,1,US bank with preferreds
+BRK-B,NYSE,0001067983,2,1500,multi-class (A/B)
+AAPL,NASDAQ,0000320193,1,1,asset-light
+HD,NYSE,0000354950,1,1,low or negative equity

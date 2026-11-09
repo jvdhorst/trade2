@@ -1,0 +1,40 @@
+[project]
+name = "valuation"
+version = "0.1.0"
+description = "Transparent equity valuation screener for TSX + S&P 500 buy-and-hold candidates"
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.1",
+    "pandas>=2.2",
+    "pyarrow>=17",
+    "requests>=2.32",
+    "yfinance>=0.2.50",
+]
+
+[project.scripts]
+valuation = "valuation.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/valuation"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: hits live data providers (deselect with -m 'not network')"]
+addopts = "-m 'not network'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B905"]

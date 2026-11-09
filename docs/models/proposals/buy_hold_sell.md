@@ -21,7 +21,7 @@ peers, or data missing). A ticker that is not well-traded gets `NOT_ELIGIBLE` an
 | Average equity | `avg_common_equity = (CE_t + CE_{t−4q}) / 2`. `CE` is `common_equity` from `book_value`, i.e. after NCI and preferreds. |
 | Currency | Ratios are computed in reporting currency. Per-share values are converted with `fx_daily` as in `book_value`. |
 | Peer group | GICS sector from the universe file. TSX and US are pooled, because ratios are currency-free. Industry-level groups are used only where ≥ 12 names exist. |
-| Cost of equity `r` | `r = rf_local + ERP`, with `rf` = the 10-year government yield on `as_of` (Canada: BoC Valet `BD.CDN.10YR.DQ.YLD`; US: Treasury 10y) and `ERP = 5.0%`. No beta: betas are noisy, hard to check and add a fitted parameter. Sensitivity at ±1pp is always reported. |
+| Cost of equity `r` | `r = rf_local + ERP`, with `rf` = the 10-year government yield on `as_of` (Canada: BoC Valet `BD.CDN.10YR.DQ.YLD`; US: FRED `DGS10`, as built in Phase 6) and `ERP = 5.0%`. No beta: betas are noisy, hard to check and add a fitted parameter. Sensitivity at ±1pp is always reported. |
 
 ## 1. "Well-traded" (eligibility filter)
 
@@ -256,7 +256,7 @@ human analyst, so it is displayed, not hidden.
 
 | Field | Models | Free source (US / TSX) | Effort |
 |---|---|---|---|
-| 13 months of daily close, adj_close, volume | Filter, C | Yahoo chart `range=13mo` (existing host) / same | S |
+| 13 months of daily close, adj_close, volume | Filter, C | Yahoo chart (existing host); **as built:** `range=2y`, since 13 months gives ~272 sessions and E6 needs 273 / same | S (done, Phase 6) |
 | Net income to common, quarterly | A, B, C | EDGAR `NetIncomeLossAvailableToCommonStockholdersBasic` / `NetIncomeLoss`; Yahoo `quarterlyNetIncomeCommonStockholders` | S (TTM/Q4 logic: M) |
 | Dividends per share | A | Yahoo chart `events=div` (both) | S |
 | US 10y yield | A | FRED `DGS10` or treasury.gov (**new host**) | S |

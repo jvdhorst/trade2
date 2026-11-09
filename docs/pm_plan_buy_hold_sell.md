@@ -53,7 +53,8 @@ signal is trusted.
 | P8-3 | Run A and B (US first; TSX short-history caveat). Results labelled "survivor-biased upper bound" until delisted prices exist | QA | `docs/qa/backtest_<model>.md` pass/fail vs bar |
 
 ### Phase 9: Data batch 2 + Model C (AN → QA → SW)
-CFO, capex, gross profit, total assets, total debt, cash. Then spec, tests, implement the composite with vetoes,
+CFO, capex, gross profit, total assets, total debt, cash, **revenue and EBIT** (the last two are not used by Model C
+but are the inputs of Model B's EV/Sales branch in Phase 10, so they belong in this batch). Then spec, tests, implement the composite with vetoes,
 backtest it, and report each factor's spread.
 
 ### Phase 10: Model B EV/Sales branch + vote

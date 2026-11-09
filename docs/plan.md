@@ -2,7 +2,7 @@
 
 ## Goal
 A daily-updated system that pulls financials, prices, market cap and peer data for
-**TSX Composite (~220) + S&P 500**, estimates per-share value with transparent
+**TSX Composite (215) + S&P 500 (503)**, estimates per-share value with transparent
 models, and writes a **ranked CSV/Parquet report** of buy-and-hold candidates for
 human review. No trading. Single companies first; baskets/indices later.
 
@@ -39,7 +39,7 @@ QA writes tests from the spec, not from the code.
 |---|---|---|
 | Prices, shares, market cap | Yahoo chart/quote (yfinance) | Yahoo (`.TO`) |
 | Fundamentals | SEC EDGAR XBRL `companyfacts` (official, point-in-time) | Yahoo fundamentals (annual/quarterly) |
-| FX, rates | Bank of Canada Valet | Bank of Canada Valet |
+| FX, rates | Bank of Canada Valet (USD/CAD); FRED `DGS10` (US 10y) | Bank of Canada Valet (USD/CAD, 10y) |
 | Sector / industry | Yahoo profile | Yahoo profile |
 | Peers | Same industry within universe (fallback: sector) | same |
 
@@ -47,13 +47,14 @@ Known gap: TSX fundamentals from Yahoo have limited history and no filing dates.
 A paid provider (FMP / EODHD) is the candidate fix; decision at Phase 5.
 
 Allowed hosts (environment `trade2`): `query1/query2.finance.yahoo.com`,
-`fc.yahoo.com`, `finance.yahoo.com`, `data.sec.gov`, `www.sec.gov`, `www.bankofcanada.ca`.
+`fc.yahoo.com`, `finance.yahoo.com`, `data.sec.gov`, `www.sec.gov`, `www.bankofcanada.ca`,
+`fred.stlouisfed.org` (approved 2026-11-09 for the US 10-year yield).
 
 ## Storage
 - `data/raw/<source>/<date>/…json`: immutable raw cache (gitignored)
-- `data/valuation.duckdb`: tables `securities`, `prices_daily`, `fundamentals`
-  (long format, keyed by `filed_date` to prevent look-ahead), `fx_daily`,
-  `valuations`, `runs`
+- `data/valuation.duckdb`: tables `securities`, `prices_daily` (close, adj_close, volume), `fundamentals`
+  (long format, keyed by `filed_date` to prevent look-ahead, incl. quarterly `ni_common_q`), `dividends`,
+  `fx_daily`, `rates_daily`, `reference_metrics`, `fetch_log`, `valuations`, `runs`
 - Monetary values always carry a currency. Conversions happen at valuation time
   using `fx_daily`.
 
@@ -61,7 +62,11 @@ Allowed hosts (environment `trade2`): `query1/query2.finance.yahoo.com`,
 - **Phase 0: Foundation.** Scaffold, CI, DuckDB schema, `valuation init`.
 - **Phase 1: Ingestion.** Universe, prices, fundamentals, FX, coverage report.
 - **Phase 2: Book value vs price.** See `docs/models/book_value.md`.
-- **Phase 3: Peer multiples.** P/E, EV/EBITDA, P/S, ROE-justified P/B.
-- **Phase 4: Cash-flow models.** DDM (banks, utilities, pipelines), 2-stage DCF/FCFE.
-- **Phase 5: Composite score.** Quality screens, confidence, data-provider decision.
-- **Later:** baskets/indices, point-in-time backtest of the screen, HTML dashboard.
+- **Phases 3–5 (original plan): peer multiples, cash-flow models, composite.** Superseded by Phases 6–10 below,
+  which deliver the same ground as BUY/HOLD/SELL models (B = peer multiples, A and the proposed D/I/L = cash-flow
+  and intrinsic models, C = composite). Only the Phase 5 **data-provider decision** (TSX history, delisted prices)
+  remains an open item under that name.
+- **Phases 6–10: BUY / HOLD / SELL.** Data batch 1 + eligibility (6, done) → Model A + B's P/B branch (7) →
+  backtest harness (8) → data batch 2 + Model C (9) → B's EV/Sales branch + vote (10). Plan:
+  `docs/pm_plan_buy_hold_sell.md`; proposals: `docs/models/proposals/`.
+- **Later:** additional models (`docs/models/proposals/additional_models.md`), baskets/indices, HTML dashboard.

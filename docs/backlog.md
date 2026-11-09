@@ -57,6 +57,7 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | P8-1..3 | Backtest harness (PIT S&P membership, engine, A/B results) | SW/QA | todo |
 | P9 | Data batch 2 + Model C composite | AN/QA/SW | todo |
 | P10 | Model B EV/Sales branch + vote | AN/QA/SW | todo |
+| P11-0 | AN proposal: 10 additional models D–M (`docs/models/proposals/additional_models.md`), shortlist H, J, G | PM | review (branch `claude/an-additional-models`) |
 
 ## Decisions log
 - 2026-11-09: initial testing uses a ~2% subset of the universe (14 tickers, `universe/reference.csv`).
@@ -77,6 +78,10 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
   thresholds not tuned. FRED only answers curl-style User-Agents (documented in `providers/rates.py`).
 
 ## Next up (PM selection)
-1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.
-2. Phase 3 spec (AN): peer multiples, including an insurer-appropriate measure (adjusted BV with CSM).
-3. P2-8 non-common equity input.
+1. Phase 7 (Model A + Model B's P/B branch, report v2). Phase 6 is done; P2-9 sector gating is superseded by P7-5.
+2. Phase 6 leftovers: P6-7 (DPS vs issuer ±2%), P6-8 (Yahoo balance-sheet filed-date cap), P6-9 (per-universe reports).
+3. P2-8 non-common equity input (insurers), together with P7-6 (CSM).
+
+Corrections filed by AN (2026-11-09, with the additional-models proposal): `plan.md` phases 3–5 marked superseded by
+phases 6–10, FRED host and the new DB tables added; `pm_plan` Phase 9 now lists revenue and EBIT (needed by Phase 10);
+`buy_hold_sell.md` §0/§8 note the as-built sources (FRED DGS10, 2-year price backfill).

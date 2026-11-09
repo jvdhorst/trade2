@@ -34,7 +34,7 @@ def _fx(con, as_of: date, reporting: str, trading: str) -> float | None:
     return row[0] if reporting == "USD" else 1.0 / row[0]
 
 
-def _filings(con, ticker: str, source: str) -> list[bv.Filing]:
+def _filings(con, ticker: str, source: str, need_shares: bool = True) -> list[bv.Filing]:
     rows = con.execute(
         "SELECT period_end, filed_date, item, value, unit, filed_estimated FROM fundamentals "
         f"WHERE ticker=? AND source=? AND item IN ({','.join('?' * len(ITEMS))})",
@@ -47,7 +47,7 @@ def _filings(con, ticker: str, source: str) -> list[bv.Filing]:
             d["_currency"] = unit
         d["_filed_estimated"] = bool(est)
     return [bv.Filing(pe, fd, d) for (pe, fd), d in grouped.items()
-            if TOTAL_EQUITY in d and SHARES in d]
+            if TOTAL_EQUITY in d and (SHARES in d or not need_shares)]
 
 
 def build_inputs(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] | None = None):
@@ -347,7 +347,9 @@ def _common_equity(f: bv.Filing) -> float:
 
 
 def _all_filings(con, ticker: str, as_of: date) -> dict[str, list[bv.Filing]]:
-    return {src: [f for f in _filings(con, ticker, src) if f.filed_date <= as_of]
+    # Equity lookups (CE_end at q0, CE_start, ROE history) need equity only, not a share count:
+    # multi-class EDGAR filers often lack the cover-page share count (spec: Data mapping).
+    return {src: [f for f in _filings(con, ticker, src, need_shares=False) if f.filed_date <= as_of]
             for src in SOURCE_PRIORITY}
 
 

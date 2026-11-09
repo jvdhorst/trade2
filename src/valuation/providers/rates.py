@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import io
+import time
 from datetime import date, timedelta
 
 import requests
@@ -62,9 +63,18 @@ class RatesProvider:
         key = f"DGS10_{end.isoformat()}_{days}"
         raw = self.cache.get(SOURCE, key)
         if raw is None:
-            r = requests.get(FRED_URL.format(start=(end - timedelta(days=days)).isoformat()),
-                             headers={"User-Agent": "trade2-valuation-screener"}, timeout=30)
-            r.raise_for_status()
-            raw = r.text
+            url = FRED_URL.format(start=(end - timedelta(days=days)).isoformat())
+            raw = None
+            for attempt in range(3):  # FRED is slow on long ranges (first load: back to 2013)
+                try:
+                    r = requests.get(url, headers={"User-Agent": "trade2-valuation-screener"},
+                                     timeout=120)
+                    r.raise_for_status()
+                    raw = r.text
+                    break
+                except (requests.Timeout, requests.ConnectionError):
+                    if attempt == 2:
+                        raise
+                    time.sleep(5 * 2**attempt)
             self.cache.put(SOURCE, key, raw)
         return raw

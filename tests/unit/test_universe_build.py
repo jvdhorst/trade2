@@ -48,3 +48,11 @@ def test_validate():
     assert validate(rows, 2) == []
     assert any("duplicate" in p for p in validate(rows + rows[:1], 2))
     assert any("only" in p for p in validate(rows, 200))
+
+
+def test_xic_multi_class_flags():
+    rows = {r["ticker"]: r for r in parse_xic_csv(XIC)[0]}
+    assert rows["BBD-B.TO"]["share_classes"] == 2
+    assert rows["RY.TO"]["share_classes"] == 1
+    unit = XIC.replace('"BBD.B"', '"BIP.UN"')
+    assert {r["ticker"]: r for r in parse_xic_csv(unit)[0]}["BIP-UN.TO"]["share_classes"] == 1

@@ -137,3 +137,12 @@ def test_peer_sector_prefers_gics_over_yahoo(con):
     sectors = df.set_index("ticker")["sector"]
     assert sectors["CAN.TO"] == "Financials"  # GICS from the universe file
     assert sectors["USA"] == "S"  # no GICS: Yahoo sector
+
+
+def test_universe_filter_and_coverage(con):
+    df, info = run_book_value(con, AS_OF, min_peers=1, tickers={"CAN.TO", "USA", "GHOST"})
+    assert set(df["ticker"]) == {"CAN.TO", "USA"}
+    cov = info["coverage"].set_index("ticker")
+    assert cov.loc["GHOST", "status"] == "skipped" and cov.loc["GHOST", "reason"] == "not ingested"
+    assert cov.loc["USA", "source"] == "sec_edgar" and not cov.loc["USA", "filed_estimated"]
+    assert cov.loc["CAN.TO", "filed_estimated"]

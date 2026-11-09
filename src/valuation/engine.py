@@ -47,13 +47,15 @@ def _filings(con, ticker: str, source: str) -> list[bv.Filing]:
             if TOTAL_EQUITY in d and SHARES in d]
 
 
-def build_inputs(con: duckdb.DuckDBPyConnection, as_of: date):
+def build_inputs(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] | None = None):
     inputs, skipped = [], {}
     secs = con.execute(
         "SELECT ticker, currency, coalesce(gics_sector, sector), industry, share_classes, "
         "share_conversion FROM securities ORDER BY ticker"
     ).fetchall()
     for ticker, currency, sector, industry, classes, conversion in secs:
+        if tickers is not None and ticker not in tickers:
+            continue
         conversion = conversion or 1.0
         price_row = con.execute(
             "SELECT date, close FROM prices_daily WHERE ticker=? AND date<=? "
@@ -107,8 +109,12 @@ def _git_sha() -> str | None:
 
 
 def run_book_value(con: duckdb.DuckDBPyConnection, as_of: date,
-                   min_peers: int = bv.DEFAULT_MIN_PEERS) -> tuple[pd.DataFrame, dict]:
-    inputs, skipped = build_inputs(con, as_of)
+                   min_peers: int = bv.DEFAULT_MIN_PEERS,
+                   tickers: set[str] | None = None) -> tuple[pd.DataFrame, dict]:
+    inputs, skipped = build_inputs(con, as_of, tickers)
+    if tickers is not None:  # universe members never ingested
+        known = {r[0] for r in con.execute("SELECT ticker FROM securities").fetchall()}
+        skipped.update({t: "not ingested" for t in tickers - known})
     meta = {i.ticker: m for i, m in inputs}
     results = [bv.compute_book_value(i) for i, _ in inputs]
     ranked = bv.rank(bv.peer_relative(results, min_peers=min_peers))
@@ -137,4 +143,23 @@ def run_book_value(con: duckdb.DuckDBPyConnection, as_of: date,
              v.upside, v.pb_percentile, rec["flags"], json.dumps(meta[v.ticker])],
         )
     df = pd.DataFrame.from_records(records)
-    return df, {"run_id": run_id, "skipped": skipped}
+    return df, {"run_id": run_id, "skipped": skipped,
+                "coverage": coverage(df, skipped, {t: m for t, m in meta.items()})}
+
+
+def coverage(df: pd.DataFrame, skipped: dict[str, str], meta: dict[str, dict]) -> pd.DataFrame:
+    """One row per security: valued or skipped (with reason), source and data-quality fields."""
+    rows = []
+    for _, r in df.iterrows():
+        m = meta[r["ticker"]]
+        rows.append({
+            "ticker": r["ticker"], "status": "valued", "reason": "", "source": m["source"],
+            "period_end": m["period_end"], "filed_estimated": m["filed_estimated"],
+            "flags": r["flags"], "peer_level": r["peer_level"], "n_peers": r["n_peers"],
+            "has_fair_value": pd.notna(r["fair_value"]),
+        })
+    for t, reason in skipped.items():
+        rows.append({"ticker": t, "status": "skipped", "reason": reason, "source": None,
+                     "period_end": None, "filed_estimated": None, "flags": "",
+                     "peer_level": None, "n_peers": 0, "has_fair_value": False})
+    return pd.DataFrame(rows).sort_values("ticker").reset_index(drop=True)

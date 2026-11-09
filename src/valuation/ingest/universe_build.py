@@ -30,6 +30,9 @@ COLUMNS = ["ticker", "exchange", "cik", "share_classes", "share_conversion", "gi
            "gics_sub_industry", "name", "source", "source_as_of", "note"]
 
 TSX_TICKER = re.compile(r"^[A-Z]{1,6}(\.[A-Z]{1,2})?$")
+TSX_CLASS_SUFFIX = re.compile(r"\.[A-Z]$")  # BBD.B, GIB.A (but not BIP.UN trust units)
+# Multi-class issuers whose listed line carries no class suffix.
+TSX_MULTI_CLASS = {"BN": "class A; class B also outstanding"}
 # Listed share classes with identical economics (or an explicit conversion ratio).
 MULTI_CLASS_US = {
     "BRK-B": (2, 1500.0, "class B; EDGAR/Yahoo shares are A-equivalent (1 A = 1500 B)"),
@@ -62,11 +65,14 @@ def parse_xic_csv(text: str) -> tuple[list[dict], str | None]:
             continue
         if float((r.get("Price") or "0").replace(",", "")) <= 0:  # placeholder lines
             continue
+        multi = bool(TSX_CLASS_SUFFIX.search(t)) or t in TSX_MULTI_CLASS
         rows.append({
-            "ticker": tsx_to_yahoo(t), "exchange": "TSX", "cik": "", "share_classes": 1,
+            "ticker": tsx_to_yahoo(t), "exchange": "TSX", "cik": "",
+            "share_classes": 2 if multi else 1,
             "share_conversion": 1, "gics_sector": r.get("Sector", ""), "gics_sub_industry": "",
             "name": r.get("Name", "").title(), "source": "iShares XIC holdings",
-            "source_as_of": as_of or "", "note": "",
+            "source_as_of": as_of or "",
+            "note": TSX_MULTI_CLASS.get(t, "listed share class" if multi else ""),
         })
     return rows, as_of
 

@@ -21,3 +21,24 @@ def write_report(df: pd.DataFrame, as_of, out_root: str | Path = "reports") -> t
         df.to_csv(fh, index=False, float_format="%.6g")
     df.to_parquet(pq_path, index=False)
     return csv_path, pq_path
+
+
+def write_coverage(cov: pd.DataFrame, as_of, out_root: str | Path = "reports") -> Path:
+    out = Path(out_root) / str(as_of)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "coverage_book_value.csv"
+    cov.to_csv(path, index=False)
+    return path
+
+
+def coverage_summary(cov: pd.DataFrame) -> list[str]:
+    n = len(cov)
+    valued = int((cov["status"] == "valued").sum())
+    fv = int(cov["has_fair_value"].sum())
+    lines = [f"coverage: {valued}/{n} valued ({valued / n:.0%}), {fv} with a peer fair value"]
+    reasons = cov.loc[cov["status"] == "skipped", "reason"].value_counts()
+    lines += [f"  skipped x{c}: {r}" for r, c in reasons.items()]
+    flags = cov["flags"].str.split(",").explode()
+    flags = flags[flags.astype(bool)].value_counts()
+    lines += [f"  flag {f}: {c}" for f, c in flags.items()]
+    return lines

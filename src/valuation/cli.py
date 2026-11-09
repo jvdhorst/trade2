@@ -21,6 +21,8 @@ def main(argv: list[str] | None = None) -> int:
     pv.add_argument("--as-of", type=date.fromisoformat, default=date.today())
     pv.add_argument("--min-peers", type=int, default=5)
     pv.add_argument("--out", default="reports")
+    pv.add_argument("--universe", default=None,
+                    help="restrict the run to tickers in this universe CSV (default: all ingested)")
     pu = sub.add_parser("universe", help="rebuild TSX Composite + S&P 500 lists")
     pu.add_argument("--out", default="universe")
     pc = sub.add_parser("crosscheck", help="compare book_value vs Yahoo reference metrics")
@@ -43,12 +45,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {k}: {v}")
     elif args.cmd == "value":
         from .engine import run_book_value
-        from .report.screen import write_report
+        from .ingest.pipeline import load_universe
+        from .report.screen import coverage_summary, write_coverage, write_report
 
-        df, info = run_book_value(con, args.as_of, args.min_peers)
+        tickers = ({r["ticker"].strip() for r in load_universe(args.universe)}
+                   if args.universe else None)
+        df, info = run_book_value(con, args.as_of, args.min_peers, tickers)
         csv_path, pq_path = write_report(df, args.as_of, args.out)
-        print(f"run {info['run_id']}: {len(df)} valued -> {csv_path}, {pq_path}")
-        for k, v in info["skipped"].items():
+        cov_path = write_coverage(info["coverage"], args.as_of, args.out)
+        print(f"run {info['run_id']}: {len(df)} valued -> {csv_path}, {pq_path}, {cov_path}")
+        for line in coverage_summary(info["coverage"]):
+            print(line)
+        for k, v in sorted(info["skipped"].items()):
             print(f"  skipped {k}: {v}")
     elif args.cmd == "universe":
         from .ingest.universe_build import build

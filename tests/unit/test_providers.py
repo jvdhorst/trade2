@@ -102,3 +102,33 @@ def test_boc_observations():
     payload = {"observations": [{"d": "2026-11-06", "FXUSDCAD": {"v": "1.3912"}},
                                 {"d": "2026-11-07", "FXUSDCAD": {"v": ""}}]}
     assert boc.parse_observations(payload) == [(date(2026, 11, 6), 1.3912)]
+
+
+def test_statement_currency_from_timeseries():
+    ts = {"timeseries": {"result": [{
+        "meta": {"symbol": ["ABX.TO"]}, "timestamp": [1],
+        "quarterlyStockholdersEquity": [
+            {"asOfDate": "2026-03-31", "currencyCode": "CAD"},
+            {"asOfDate": "2026-06-30", "currencyCode": "USD"},
+            None,
+        ]}]}}
+    assert yahoo.parse_statement_currency(ts) == "USD"
+    assert yahoo.parse_statement_currency({"timeseries": {"result": []}}) is None
+
+
+def test_profile_falls_back_and_breaker_trips(tmp_path, monkeypatch):
+    from valuation.providers.base import RawCache
+
+    p = yahoo.YahooProvider(RawCache(tmp_path), pause=0, breaker=2)
+    calls = {"qs": 0}
+
+    def boom(t):
+        calls["qs"] += 1
+        raise yahoo.ProviderError("throttled")
+
+    monkeypatch.setattr(p, "_quote_summary", boom)
+    monkeypatch.setattr(p, "_fallback_profile",
+                        lambda t: {"currency": "CAD", "financialCurrency": "USD"})
+    for t in ["A.TO", "B.TO", "C.TO", "D.TO"]:
+        assert p.info(t)["financialCurrency"] == "USD"
+    assert calls["qs"] == 2  # breaker: no more quoteSummary attempts after 2 failures

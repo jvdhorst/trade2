@@ -96,6 +96,18 @@ def parse_balance_sheet(ticker: str, bs: dict[str, dict[str, Any]], currency: st
     return facts
 
 
+def parse_statement_currency(ts_payload: dict) -> str | None:
+    """Latest currencyCode from a fundamentals-timeseries response."""
+    for res in ts_payload.get("timeseries", {}).get("result", []) or []:
+        for key, vals in res.items():
+            if key in ("meta", "timestamp") or not isinstance(vals, list):
+                continue
+            pts = [v for v in vals if v and v.get("currencyCode")]
+            if pts:
+                return max(pts, key=lambda v: v.get("asOfDate", ""))["currencyCode"]
+    return None
+
+
 def parse_history(ticker: str, rows: list[dict]) -> list[PriceBar]:
     out = []
     for r in rows:
@@ -115,11 +127,30 @@ class ProviderError(RuntimeError):
     pass
 
 
+def _reset_session() -> None:
+    """Drop yfinance's cached cookie/crumb so the next call negotiates a fresh one."""
+    try:
+        from yfinance.data import YfData
+
+        d = YfData()
+        d._crumb = None
+        d._cookie = None
+    except Exception:  # private API; best effort
+        pass
+
+
 class YahooProvider:
-    def __init__(self, cache: RawCache, pause: float = 2.0, retries: int = 4):
+    CHART_URL = "https://query2.finance.yahoo.com/v8/finance/chart/{t}?range=5d&interval=1d"
+    TS_URL = ("https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/"
+              "{t}?type=quarterlyStockholdersEquity&period1={p1}&period2={p2}")
+
+    def __init__(self, cache: RawCache, pause: float = 2.0, retries: int = 4,
+                 breaker: int = 2):
         self.cache = cache
         self.pause = pause
         self.retries = retries
+        self.breaker = breaker  # consecutive profile failures before skipping the endpoint
+        self._profile_failures = 0
 
     def _ticker(self, ticker: str):
         import yfinance as yf
@@ -128,24 +159,63 @@ class YahooProvider:
         return yf.Ticker(ticker)
 
     def info(self, ticker: str) -> dict:
+        """Profile from quoteSummary (needs a crumb); falls back to crumb-free endpoints."""
         raw = self.cache.get(SOURCE, f"{ticker}.info")
+        if raw is not None:
+            return raw
+        if self._profile_failures < self.breaker:
+            try:
+                raw = self._quote_summary(ticker)
+                self._profile_failures = 0
+            except ProviderError:
+                self._profile_failures += 1
         if raw is None:
-            # yfinance swallows 401/429 (crumb throttling) and returns an empty dict,
-            # so validate and back off; never cache an empty profile.
-            # Partial responses (sector missing) also happen: retry, then accept without it.
-            best: dict = {}
-            for attempt in range(self.retries):
-                info = self._ticker(ticker).info or {}
-                raw = {k: info.get(k) for k in PROFILE_KEYS}
-                if raw.get("currency"):
-                    best = raw
-                    if raw.get("sector"):
-                        break
-                time.sleep(5 * 2**attempt)
-            if not best:
-                raise ProviderError(f"{ticker}: Yahoo profile empty after {self.retries} tries")
-            raw = best
-            self.cache.put(SOURCE, f"{ticker}.info", raw)
+            raw = self._fallback_profile(ticker)
+        self.cache.put(SOURCE, f"{ticker}.info", raw)
+        return raw
+
+    def _quote_summary(self, ticker: str) -> dict:
+        # yfinance swallows 401/429 (crumb throttling) and returns an empty dict,
+        # so validate and back off. Partial responses (sector missing) also happen:
+        # retry, then accept without it.
+        best: dict = {}
+        for attempt in range(self.retries):
+            info = self._ticker(ticker).info or {}
+            raw = {k: info.get(k) for k in PROFILE_KEYS}
+            if raw.get("currency"):
+                best = raw
+                if raw.get("sector"):
+                    break
+            _reset_session()  # a throttled crumb otherwise sticks for the whole process
+            time.sleep(5 * 2**attempt)
+        if not best:
+            raise ProviderError(f"{ticker}: Yahoo profile empty after {self.retries} tries")
+        return best
+
+    def _get_json(self, url: str) -> dict:
+        import requests
+
+        time.sleep(self.pause / 2)
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+        r.raise_for_status()
+        return r.json()
+
+    def _fallback_profile(self, ticker: str) -> dict:
+        """Trading currency from the chart API, statement currency from the timeseries API.
+
+        Sector/industry and Yahoo's reference metrics are unavailable on this path.
+        """
+        meta = self._get_json(self.CHART_URL.format(t=ticker))["chart"]["result"][0]["meta"]
+        p2 = int(time.time())
+        ts = self._get_json(self.TS_URL.format(t=ticker, p1=p2 - 2 * 365 * 86400, p2=p2))
+        fin_ccy = parse_statement_currency(ts)
+        if not meta.get("currency"):
+            raise ProviderError(f"{ticker}: no currency from chart fallback")
+        raw = {k: None for k in PROFILE_KEYS}
+        raw.update({"symbol": ticker, "currency": meta["currency"],
+                    "financialCurrency": fin_ccy or meta["currency"],
+                    "longName": meta.get("longName"), "exchange": meta.get("exchangeName"),
+                    "quoteType": meta.get("instrumentType"), "_profile_source": "fallback"})
         return raw
 
     def balance_sheet(self, ticker: str) -> dict:

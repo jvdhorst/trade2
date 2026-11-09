@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from datetime import date
 
 from .store.db import DEFAULT_DB, connect
@@ -21,12 +22,18 @@ def main(argv: list[str] | None = None) -> int:
     pi.add_argument("--refresh-fundamentals", action="store_true",
                     help="refetch fundamentals for every ticker, ignoring the refresh policy")
     pi.add_argument("--workers", type=int, default=4)
+    pi.add_argument("--no-history", action="store_true",
+                    help="skip the per-ticker chart call (volume, adj_close, dividends)")
+    pi.add_argument("--refresh-history", action="store_true",
+                    help="refetch the full price history for every ticker")
     pv = sub.add_parser("value", help="run book_value model and write report")
     pv.add_argument("--as-of", type=date.fromisoformat, default=date.today())
     pv.add_argument("--min-peers", type=int, default=5)
     pv.add_argument("--out", default="reports")
     pv.add_argument("--universe", default=None,
                     help="restrict the run to tickers in this universe CSV (default: all ingested)")
+    pv.add_argument("--liquidity", default=None,
+                    help="eligibility thresholds YAML (default: config/liquidity.yaml)")
     pu = sub.add_parser("universe", help="rebuild TSX Composite + S&P 500 lists")
     pu.add_argument("--out", default="universe")
     pc = sub.add_parser("crosscheck", help="compare book_value vs Yahoo reference metrics")
@@ -43,27 +50,40 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "ingest":
         from .ingest.pipeline import ingest
 
+        t0 = time.monotonic()
         res = ingest(con, args.universe, args.as_of, prices_only=args.prices_only,
-                     refresh_fundamentals=args.refresh_fundamentals, workers=args.workers)
+                     refresh_fundamentals=args.refresh_fundamentals, workers=args.workers,
+                     history=not args.no_history, refresh_history=args.refresh_history)
         st = res["stats"]
         print(f"ingested {res['tickers']} tickers ({st['prices']} priced, "
-              f"{st['profiles']} profiles, "
+              f"{st['history']} with volume history ({st['backfills']} full backfills), "
+              f"{st['dividends']} dividend rows, {st['profiles']} profiles, "
               f"{st['yahoo_fundamentals']} Yahoo + {st['edgar_filings']} EDGAR fundamentals "
-              f"refreshed), {len(res['errors'])} errors")
+              f"refreshed, {st['rates']} rate rows), {len(res['errors'])} errors "
+              f"in {time.monotonic() - t0:.0f}s")
         for k, v in res["errors"].items():
             print(f"  {k}: {v}")
     elif args.cmd == "value":
         from .engine import run_book_value
         from .ingest.pipeline import load_universe
-        from .report.screen import coverage_summary, write_coverage, write_report
+        from .models.eligibility import load_config
+        from .report.screen import (
+            coverage_summary,
+            removal_summary,
+            write_coverage,
+            write_report,
+        )
 
         tickers = ({r["ticker"].strip() for r in load_universe(args.universe)}
                    if args.universe else None)
-        df, info = run_book_value(con, args.as_of, args.min_peers, tickers)
+        df, info = run_book_value(con, args.as_of, args.min_peers, tickers,
+                                  liquidity=load_config(args.liquidity))
         csv_path, pq_path = write_report(df, args.as_of, args.out)
         cov_path = write_coverage(info["coverage"], args.as_of, args.out)
         print(f"run {info['run_id']}: {len(df)} valued -> {csv_path}, {pq_path}, {cov_path}")
         for line in coverage_summary(info["coverage"]):
+            print(line)
+        for line in removal_summary(info["removal"]):
             print(line)
         for k, v in sorted(info["skipped"].items()):
             print(f"  skipped {k}: {v}")

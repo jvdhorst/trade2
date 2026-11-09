@@ -42,3 +42,19 @@ def coverage_summary(cov: pd.DataFrame) -> list[str]:
     flags = flags[flags.astype(bool)].value_counts()
     lines += [f"  flag {f}: {c}" for f, c in flags.items()]
     return lines
+
+
+def removal_summary(removal: dict[str, dict]) -> list[str]:
+    """Eligibility removal rate per market and rule (spec docs/models/eligibility.md)."""
+    from ..models.eligibility import REVIEW_PCT
+
+    lines = []
+    for market, r in removal.items():
+        rules = ", ".join(f"{k} {v}" for k, v in r["by_rule"].items())
+        line = (f"eligibility {market}: {r['n_ineligible']}/{r['n']} not eligible "
+                f"({r['pct_ineligible']:.1f}%); by rule: {rules}; "
+                f"short history (Model C): {r['short_history']}")
+        if r["pct_ineligible"] > REVIEW_PCT[market]:
+            line += "  REVIEW THRESHOLDS"
+        lines.append(line)
+    return lines

@@ -66,6 +66,15 @@ SCHEMA.append("""CREATE TABLE IF NOT EXISTS fetch_log (
         PRIMARY KEY (ticker, source)
     )""")
 
+SCHEMA.append("""CREATE TABLE IF NOT EXISTS dividends (
+        ticker VARCHAR, ex_date DATE, amount DOUBLE, currency VARCHAR, source VARCHAR,
+        PRIMARY KEY (ticker, ex_date, source)
+    )""")
+# Risk-free rates as decimal fractions (0.0512 = 5.12%); series CA10Y (BoC), US10Y (FRED DGS10).
+SCHEMA.append("""CREATE TABLE IF NOT EXISTS rates_daily (
+        date DATE, series VARCHAR, rate DOUBLE, source VARCHAR, PRIMARY KEY (date, series)
+    )""")
+
 # Additive migrations for databases created by earlier versions.
 MIGRATIONS = [
     "ALTER TABLE securities ADD COLUMN IF NOT EXISTS gics_sector VARCHAR",

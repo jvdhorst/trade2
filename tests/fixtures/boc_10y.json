@@ -1,0 +1,58 @@
+{
+    "terms": {
+        "url": "https://www.bankofcanada.ca/terms/"
+    },
+    "seriesDetail": {
+        "BD.CDN.10YR.DQ.YLD": {
+            "label": "Benchmark bond yield, 10-year",
+            "description": "The yield on the Government of Canada 10-year benchmark bond. This series represents the prevailing market interest rate for the 10-year Government of Canada bond and is used as a reference for financial market analysis and reporting.",
+            "dimension": {
+                "key": "d",
+                "name": "Date"
+            },
+            "dateFormat": "daily",
+            "metadata": {
+                "unit": "Percent",
+                "frequency": "Business daily"
+            }
+        }
+    },
+    "observations": [
+        {
+            "d": "2026-10-30",
+            "BD.CDN.10YR.DQ.YLD": {
+                "v": "3.78"
+            }
+        },
+        {
+            "d": "2026-11-02",
+            "BD.CDN.10YR.DQ.YLD": {
+                "v": "3.74"
+            }
+        },
+        {
+            "d": "2026-11-03",
+            "BD.CDN.10YR.DQ.YLD": {
+                "v": "3.77"
+            }
+        },
+        {
+            "d": "2026-11-04",
+            "BD.CDN.10YR.DQ.YLD": {
+                "v": "3.70"
+            }
+        },
+        {
+            "d": "2026-11-05",
+            "BD.CDN.10YR.DQ.YLD": {
+                "v": "3.67"
+            }
+        },
+        {
+            "d": "2026-11-06",
+            "BD.CDN.10YR.DQ.YLD": {
+                "v": "3.65"
+            }
+        }
+    ]
+}

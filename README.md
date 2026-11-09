@@ -21,14 +21,23 @@ uv run pytest                                         # offline tests (network t
 | Data | When it is fetched | How |
 |---|---|---|
 | Prices | every run | Yahoo spark batch API, 20 tickers per call; per-ticker history only for symbols the batch omits |
+| Volume, adj. close, dividends | every run, one chart call per ticker (shared ≈4 req/s limit) | Yahoo chart API: a 2-year backfill once, then 5 days a day; full refetch when a new dividend/split appears (adj_close is rebased) or after a gap > 7 days |
+| Risk-free 10y | every run | Bank of Canada Valet `BD.CDN.10YR.DQ.YLD`, FRED `DGS10` → `rates_daily` (back to 2013 on first load) |
 | TSX fundamentals | new ticker, data older than 7 days, or a new quarter expected (period end + 136 days; re-checked daily) | Yahoo fundamentals-timeseries, only the fields the model uses |
-| US fundamentals | new ticker, or a new accession for the CIK in the EDGAR frames API (1 call per quarter covers every US filer) | EDGAR companyfacts, trimmed to the parsed concepts before caching |
+| US fundamentals | new ticker, or a new accession for the CIK in the EDGAR frames API (1 call per quarter covers every US filer) | EDGAR companyfacts, trimmed to the parsed concepts before caching (balance sheet + quarterly NI to common) |
 | Profiles | new ticker or older than 30 days | Yahoo quoteSummary, with a crumb-free fallback |
 
 ```bash
 uv run valuation ingest --prices-only --universe universe/tsx_composite.csv   # fastest daily mode
 uv run valuation ingest --refresh-fundamentals ...                             # force a full refetch
+uv run valuation ingest --refresh-history ...      # refetch 2 years of daily bars for every ticker
+uv run valuation ingest --no-history ...           # skip the per-ticker chart call (no volume update)
 ```
+`valuation value` also applies the **eligibility filter** ("well-traded", spec
+[`docs/models/eligibility.md`](docs/models/eligibility.md), thresholds in [`config/liquidity.yaml`](config/liquidity.yaml),
+`--liquidity` to override). The screen and coverage reports get `eligible`, `elig_fail_reason` and `mdtv`, plus
+TTM NI to common (`ni_common_ttm`, spec [`docs/models/ttm.md`](docs/models/ttm.md)), `dps_ttm` and the local 10-year
+yield `rf`. The run prints the removal rate per market and rule; the thresholds are recorded in `runs.config_json`.
 Per-ticker fetches run on 4 threads (`--workers`), with a shared rate limit (Yahoo ≈4 req/s, SEC ≤10 req/s).
 Fetch history is in the `fetch_log` table.
 
@@ -39,7 +48,9 @@ For SEC EDGAR in production, set `VALUATION_SEC_USER_AGENT="<app> <contact email
 |---|---|
 | Prices, profile, TSX fundamentals | Yahoo Finance (via `yfinance`, unofficial) |
 | US fundamentals (point-in-time) | SEC EDGAR XBRL `companyfacts` |
-| USD/CAD | Bank of Canada Valet |
+| USD/CAD, Canada 10y yield | Bank of Canada Valet |
+| US 10y yield | FRED `DGS10` (`fred.stlouisfed.org`) |
+| Daily volume, adjusted close, dividends | Yahoo chart API |
 | Index constituents + GICS sector | iShares XIC holdings (TSX), Wikipedia (S&P 500) |
 | Issuer BVPS (QA reference) | Bank and insurer supplementary financial packs |
 
@@ -48,10 +59,13 @@ Raw responses are cached under `data/raw/<source>/<date>/`. Parsed data goes to 
 ## Layout
 ```
 src/valuation/
-  providers/  yahoo.py, sec_edgar.py, boc.py   fetch (cached) + pure parsers
+  providers/  yahoo.py, sec_edgar.py, boc.py,  fetch (cached) + pure parsers
+              rates.py
   ingest/     pipeline.py                      universe -> DB
-  models/     book_value.py                    model code (spec: docs/models/book_value.md)
+  models/     book_value.py, eligibility.py    model code (specs: docs/models/*.md)
+  ttm.py                                       point-in-time TTM flows + DPS_TTM
   engine.py                                    DB -> model inputs -> valuations table
+config/       liquidity.yaml                   eligibility thresholds
   report/     screen.py                        CSV + Parquet
   qa/         crosscheck.py                    external cross-check
 universe/     reference.csv                    14-ticker initial-testing subset (~2%)

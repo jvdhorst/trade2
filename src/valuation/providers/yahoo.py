@@ -77,10 +77,15 @@ def parse_balance_sheet(ticker: str, bs: dict[str, dict[str, Any]], currency: st
         total = g.get("Total Equity Gross Minority Interest")
         if total is None and se is not None:
             total = se + (mi or 0.0)
-        if se is not None and cse is not None:
-            pref = se - cse  # preferreds + other equity instruments (LRCNs etc.)
+        if total is not None and cse is not None:
+            # Everything that is neither common nor NCI: preferreds, LRCNs/AT1, etc.
+            # (Derived from total, not "Stockholders Equity", which Yahoo reports as 0
+            # for partnerships such as BIP/BEP.)
+            pref = total - (mi or 0.0) - cse
         else:
             pref = g.get("Preferred Stock Equity")
+        if pref is not None and pref < 0:
+            pref = None  # inconsistent components; never let a negative inflate book value
         items = {
             TOTAL_EQUITY: total,
             NCI: mi,

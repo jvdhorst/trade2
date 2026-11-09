@@ -80,7 +80,39 @@ without the file.
 post-tax contractual service margin (future profit already locked in). Plain P/B therefore overstates how expensive
 insurers look. Address this in Phase 3 (an insurer-specific multiple).
 
-## 5. Known limitations
+## 5. Full TSX Composite run (2026-11-09, book_value 0.2.0)
+`valuation ingest/value --universe universe/tsx_composite.csv`
+
+- **Coverage:** 215/215 valued (100%). 204 have a peer fair value: 95 with industry peers, 109 using the sector
+  fallback. 9 have FEW_PEERS and 2 have NEG_BOOK (e.g. BBD-B). Per ticker: `reports/2026-11-09/coverage_book_value.csv`.
+- **Issuer check:** 4/4 still pass.
+- **Yahoo agreement (±5%):** 172/215 (80%). Full table: `reports/2026-11-09/crosscheck_yahoo.csv`.
+- **Bug found and fixed:** Yahoo reports "Stockholders Equity" = 0 for partnerships (BIP-UN, BEP-UN), so the
+  derived preferred equity went negative and inflated BVPS 2.3×. Preferred is now total − NCI − common, and
+  negatives are rejected. Results for all previously correct names are unchanged.
+
+### Outliers for triage (not auto-fixed)
+| Ticker | Ours vs Yahoo | Likely cause | Next step |
+|---|---|---|---|
+| BIP-UN, BEP-UN | −17%, −20% | Brookfield partnerships: several unit classes (LP units, exchangeable shares, redeemable partnership units held as NCI) | Issuer check against "equity per unit"; may need a unit-class conversion |
+| POW | −38% | Holdco: Yahoo's "Preferred Stock Equity" (C$10.5B) looks too large for Power Corp's own preferreds | Issuer check (Power Corp supplementary) |
+| CLS | −56% | Ours = US$2.48B equity / 115M shares, which looks right. Yahoo's BV of 69.2 is inconsistent | Spot-check the 10-Q |
+| AAUC, MDA, GFL, DML, BAM | −20 to −34% | Unknown. Possibly NCI or preferred definitions, or a newer quarter at Yahoo | QA triage |
+
+The rest of the misses (34 names) are 5–20%. Most are FX-converted USD reporters or financials, where Yahoo's
+definition is known to differ.
+
+### Analyst observations on the screen
+- **Book value only works for some sectors.** The top raw upsides come from asset-light companies valued against
+  high-P/B peer medians: LSPD +928% (software median 9.9×), LNR, MG and CTC-A against a 7-name Consumer
+  Discretionary median of 7.0×. These are model artifacts, not opportunities. Proposal (AN): rank only where P/B
+  is a meaningful anchor (Financials, Real Estate, Energy, Utilities, Materials), and show the other sectors
+  unranked until Phase 3 multiples.
+- **Peer groups mix taxonomies.** The sector is GICS but the industry is Yahoo's, so LSPD is a GICS "Financials"
+  name (payments) whose industry peers are software companies. A consistent sub-industry source for TSX is needed.
+- **No profitability adjustment yet.** Low P/B can be justified by low ROE. The ROE-justified P/B (Phase 3) is the fix.
+
+## 6. Known limitations
 - TSX `filed_date` is estimated (period end + 45 days), so look-ahead protection for TSX names is approximate.
 - From v0.2.0 the peer sector is GICS (from the universe files). Industry is still Yahoo's. With only 14 tickers,
   most groups fall below 5, so the peer fair value **is not meaningful until a full-universe ingest (P1-8)**.

@@ -69,7 +69,7 @@ def test_yahoo_balance_sheet_mapping():
     facts = yahoo.parse_balance_sheet("RY.TO", bs, "CAD")
     it = _items(facts)
     assert it[TOTAL_EQUITY] == 145.0
-    assert it[PREFERRED] == 144.5 - 133.0  # SE - common equity (prefs + other equity instr.)
+    assert it[PREFERRED] == 145.0 - 0.5 - 133.0  # total - NCI - common (prefs + other instr.)
     assert it[SHARES] == 1.4
     f = facts[0]
     assert f.filed_date == date(2026, 9, 14) and f.filed_estimated  # +45 days estimate
@@ -132,3 +132,19 @@ def test_profile_falls_back_and_breaker_trips(tmp_path, monkeypatch):
     for t in ["A.TO", "B.TO", "C.TO", "D.TO"]:
         assert p.info(t)["financialCurrency"] == "USD"
     assert calls["qs"] == 2  # breaker: no more quoteSummary attempts after 2 failures
+
+
+def test_yahoo_partnership_zero_stockholders_equity():
+    # BIP-UN.TO shape: "Stockholders Equity" reported as 0, equity sits in CSE + NCI.
+    bs = {"2026-06-30": {"Total Equity Gross Minority Interest": 32523.0,
+                         "Stockholders Equity": 0.0, "Common Stock Equity": 5166.0,
+                         "Minority Interest": 27357.0, "Ordinary Shares Number": 460.0}}
+    it = _items(yahoo.parse_balance_sheet("BIP-UN.TO", bs, "USD"))
+    assert it[PREFERRED] == 0.0
+    assert it[TOTAL_EQUITY] - it[NCI] - it[PREFERRED] == 5166.0
+
+
+def test_yahoo_negative_preferred_rejected():
+    bs = {"2026-06-30": {"Total Equity Gross Minority Interest": 100.0,
+                         "Common Stock Equity": 120.0, "Ordinary Shares Number": 10.0}}
+    assert PREFERRED not in _items(yahoo.parse_balance_sheet("X", bs, "USD"))

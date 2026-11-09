@@ -19,8 +19,10 @@ Status: `todo` · `doing` · `done` · `blocked`
 | P1-4 | EDGAR provider: companyfacts → `fundamentals` with `filed_date` | SW | US reference tickers have equity + shares | done |
 | P1-5 | BoC provider: USD/CAD daily | SW | `fx_daily` populated | done |
 | P1-6 | Parser tests on recorded fixtures | QA | Offline, deterministic | done |
-| P1-7 | Coverage / data-quality report | QA/SW | Missing fields, stale prices, unit mismatches listed | todo |
-| P1-8 | Full-universe ingest run (~718 tickers, ~60–75 min at the Yahoo pace) | SW | ≥95% valued; run on request | todo |
+| P1-7 | Coverage / data-quality report | QA/SW | Missing fields, stale prices, unit mismatches listed | done (`coverage_book_value.csv`) |
+| P1-8 | Full TSX Composite ingest run (215) | SW | ≥95% valued | done (100%) |
+| P1-9 | S&P 500 ingest run (503) | SW | ≥95% valued; run on request | todo |
+| P1-10 | QA triage of Yahoo outliers (BIP/BEP units, POW, CLS, AAUC, MDA, GFL, DML, BAM) | QA | Each explained or fixed | todo |
 
 ## Phase 2: Book value vs price
 | ID | Task | Owner | Acceptance | Status |
@@ -32,6 +34,7 @@ Status: `todo` · `doing` · `done` · `blocked`
 | P2-5 | External cross-check vs Yahoo `bookValue` / `priceToBook` | QA | Results and explained misses in `docs/qa/book_value-validation.md` | done (11/14 pass; TD, BNS, MFC open → P2-6) |
 | P2-6 | Issuer check: RY, TD, BNS, MFC against supplementary packs | QA | BVPS within ±3% | done (automated, `crosscheck --issuer`) |
 | P2-7 | Spec v0.2.0: GICS sector for peers | AN/QA/SW | Tests green | done |
+| P2-9 | Rank only in P/B-meaningful sectors; others unranked | AN | Spec v0.3.0 + tests | todo |
 | P2-8 | Non-common equity input (insurers' participating policyholders' equity) | AN | Spec + source identified | todo |
 
 ## Decisions log
@@ -42,7 +45,9 @@ Status: `todo` · `doing` · `done` · `blocked`
 - 2026-11-09: issuer filings are the primary reference for financials; Yahoo `bookValue` is secondary
   (wrong for TD, BNS, MFC).
 
+- 2026-11-09: expanded to the full TSX Composite (user request). S&P 500 not yet ingested.
+
 ## Next up (PM selection)
-1. P1-7 coverage report, then P1-8 full-universe run (when the user OKs leaving the 2% subset).
+1. P2-9 sector gating (removes the asset-light artifacts at the top of the screen), then P1-10 triage.
 2. Phase 3 spec (AN): peer multiples, including an insurer-appropriate measure (adjusted BV with CSM).
 3. P2-8 non-common equity input.

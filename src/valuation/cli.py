@@ -26,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="skip the per-ticker chart call (volume, adj_close, dividends)")
     pi.add_argument("--refresh-history", action="store_true",
                     help="refetch the full price history for every ticker")
-    pv = sub.add_parser("value", help="run book_value model and write report")
+    pv = sub.add_parser("value", help="run book_value + Models A/B and write reports")
     pv.add_argument("--as-of", type=date.fromisoformat, default=date.today())
     pv.add_argument("--min-peers", type=int, default=5)
     pv.add_argument("--out", default="reports")
@@ -34,13 +34,17 @@ def main(argv: list[str] | None = None) -> int:
                     help="restrict the run to tickers in this universe CSV (default: all ingested)")
     pv.add_argument("--liquidity", default=None,
                     help="eligibility thresholds YAML (default: config/liquidity.yaml)")
+    pv.add_argument("--csm", default="universe/insurer_csm.csv",
+                    help="manual insurer CSM input (Model A/B, spec residual_income.md)")
+    pv.add_argument("--no-signals", action="store_true",
+                    help="skip Model A/B and screen_signals (book_value report only)")
     pu = sub.add_parser("universe", help="rebuild TSX Composite + S&P 500 lists")
     pu.add_argument("--out", default="universe")
     pc = sub.add_parser("crosscheck", help="compare book_value vs Yahoo reference metrics")
     pc.add_argument("--as-of", type=date.fromisoformat, default=date.today())
     pc.add_argument("--tolerance", type=float, default=None)
     pc.add_argument("--issuer", action="store_true",
-                    help="compare against issuer-reported BVPS (universe/issuer_sources.csv)")
+                    help="compare against issuer BVPS and ROE (universe/issuer_sources.csv)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -87,6 +91,19 @@ def main(argv: list[str] | None = None) -> int:
             print(line)
         for k, v in sorted(info["skipped"].items()):
             print(f"  skipped {k}: {v}")
+        if not args.no_signals:
+            from .engine import run_signals
+            from .report.screen import signal_summary, write_signals
+
+            sdf, sinfo = run_signals(con, args.as_of, tickers,
+                                     liquidity=load_config(args.liquidity), csm_path=args.csm)
+            s_csv, s_pq = write_signals(sdf, args.as_of, args.out)
+            print(f"signals run {sinfo['run_id']}: {len(sdf)} rows -> {s_csv}, {s_pq}")
+            for s, f in sorted(sinfo["fits"].items()):
+                r2 = "n/a" if f.r2 is None else f"{f.r2:.3f}"
+                print(f"  model B fit {s}: {f.status}, n_fit {f.n_fit}, R2 {r2}")
+            for line in signal_summary(sinfo["counts"]):
+                print(line)
     elif args.cmd == "universe":
         from .ingest.universe_build import build
 

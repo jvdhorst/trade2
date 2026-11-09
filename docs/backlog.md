@@ -35,8 +35,8 @@ Status: `todo` · `doing` · `done` · `blocked`
 | P2-5 | External cross-check vs Yahoo `bookValue` / `priceToBook` | QA | Results and explained misses in `docs/qa/book_value-validation.md` | done (11/14 pass; TD, BNS, MFC open → P2-6) |
 | P2-6 | Issuer check: RY, TD, BNS, MFC against supplementary packs | QA | BVPS within ±3% | done (automated, `crosscheck --issuer`) |
 | P2-7 | Spec v0.2.0: GICS sector for peers | AN/QA/SW | Tests green | done |
-| P2-9 | Rank only in P/B-meaningful sectors; others unranked | AN | Spec v0.3.0 + tests | todo |
-| P2-8 | Non-common equity input (insurers' participating policyholders' equity) | AN | Spec + source identified | todo |
+| P2-9 | Rank only in P/B-meaningful sectors; others unranked | AN | Spec v0.3.0 + tests | superseded by P7-5 (Model A sector applicability, Model B book sectors) |
+| P2-8 | Non-common equity input (insurers' participating policyholders' equity) | AN | Spec + source identified | todo (MFC CSM-adjusted book is +1.4% vs issuer because of it) |
 
 ## Phases 6–10: BUY / HOLD / SELL models
 Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [`docs/models/proposals/buy_hold_sell.md`](models/proposals/buy_hold_sell.md)
@@ -53,7 +53,20 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | P6-7 | DPS_TTM vs issuer-declared dividends for the reference set (±2%) | QA | todo |
 | P6-8 | Yahoo balance-sheet filed date: apply the download-date cap used for NI (ttm.md v0.1.1) | SW | todo |
 | P6-9 | Report files per universe (a second `value` run on the same day overwrites the first) | SW | todo |
-| P7-1..6 | Model A (residual income) + Model B P/B~ROE branch, report v2, insurer CSM | AN/QA/SW | todo |
+| P7-1 | Specs `residual_income.md` (A) and `peer_regression.md` (B book branch) | AN | done (proposal goldens reproduced: V_RI 61.13 / 58.85, fitted P/B 1.935, FV 77.39, +38.2%) |
+| P7-2 | QA tests from spec, before code (incl. Theil–Sen vs scipy, look-ahead, CSM, report) | QA | done (335 new tests) |
+| P7-3 | `models/residual_income.py`, `models/peer_regression.py`, signal mapping | SW | done (tests green) |
+| P7-4 | External checks: issuer ROE ±1.5pp, regression reproduced, `docs/qa/phase7-validation.md` | QA | done (RY/TD/BNS ROE within 0.2pp) |
+| P7-5 | Report v2 `screen_signals.{csv,parquet}` with disclaimer, `signals` table | SW | done |
+| P7-6 | Insurer CSM via manual `universe/insurer_csm.csv` | QA/human | MFC done; **SLF, GWO, IAG need human input** (NO_SIGNAL / NEEDS_CSM_INPUT) |
+| P7-7 | TSX sector label "Communication" (iShares) ≠ GICS "Communication Services": 5 names get NO_SECTOR | SW | todo |
+| P7-8 | PM decision: Model B BUY on loss-makers scored at the 5th-pct ROE (NEG_ROE_UNFITTED, 7 BUYs) | PM/AN | todo |
+| P7-9 | PM/backtest: Model A gives SELL on 309/718 (no terminal value, T = 10); review only after Phase 8, no tuning | PM | todo |
+| P7-10 | Fill SLF/GWO/IAG CSM after tax each quarter (issuer SIPs) | human | todo |
+| P7-11 | One-off gains drive 5 of 8 Model A BUYs (ECHO, FIS, FCR-UN, APA, SMCI): rule for a dominant quarter (AN) | AN/PM | todo |
+| P7-12 | SMCI: Yahoo tags US$4.23B preferred at 2026-06-30, EDGAR none; read the 10-Q | QA | todo |
+| P7-13 | 52/53-week filers: Yahoo vs EDGAR quarter ends 1–5 days apart give 22 false ROE_PERIOD_MISMATCH (spec change) | AN/SW | todo |
+| P7-14 | Model B Financials slope steepened by payments/ratings/brokers (MA, MCO, V, AMP, AON): ALL +466%; sub-industry peers? | AN/PM | todo |
 | P8-1..3 | Backtest harness (PIT S&P membership, engine, A/B results) | SW/QA | todo |
 | P9 | Data batch 2 + Model C composite | AN/QA/SW | todo |
 | P10 | Model B EV/Sales branch + vote | AN/QA/SW | todo |
@@ -75,6 +88,10 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 - 2026-11-09: Phase 6. History backfill uses `range=2y`, not 13 months (13mo returns ~272 sessions, E6 needs 273).
   Eligibility removal rates came in at TSX 9.3% / S&P 0.2%, below the expected 15–25% / <10%. Reported to PM,
   thresholds not tuned. FRED only answers curl-style User-Agents (documented in `providers/rates.py`).
+
+- 2026-11-09: Phase 7. Model A + Model B book branch, report v2 (no vote). Parameters as approved, not tuned.
+  ROE_PERIOD_MISMATCH on 124 TSX / 78 US names traces back to P6-8 (TSX balance-sheet filed date) and to Yahoo NI
+  being newer than EDGAR's balance sheet for US names; flagged, not changed.
 
 ## Next up (PM selection)
 1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.

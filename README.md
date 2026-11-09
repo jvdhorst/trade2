@@ -11,9 +11,9 @@ It does no trading. Updates run about once a day. Every number traces back to a 
 uv sync
 uv run valuation init                                 # create data/valuation.duckdb
 uv run valuation ingest --universe universe/reference.csv   # prices + whatever is due (see below)
-uv run valuation value                                # writes reports/<date>/screen_book_value.{csv,parquet}
+uv run valuation value                                # screen_book_value + screen_signals (Models A/B) in reports/<date>/
 uv run valuation crosscheck                           # compare against Yahoo's published book value
-uv run valuation crosscheck --issuer                  # compare against issuer supplementary packs
+uv run valuation crosscheck --issuer                  # issuer supplementary packs: BVPS (±3%) and ROE (±1.5pp)
 uv run valuation universe                             # rebuild TSX Composite + S&P 500 lists
 uv run pytest                                         # offline tests (network tests are deselected)
 ```
@@ -38,6 +38,20 @@ uv run valuation ingest --no-history ...           # skip the per-ticker chart c
 `--liquidity` to override). The screen and coverage reports get `eligible`, `elig_fail_reason` and `mdtv`, plus
 TTM NI to common (`ni_common_ttm`, spec [`docs/models/ttm.md`](docs/models/ttm.md)), `dps_ttm` and the local 10-year
 yield `rf`. The run prints the removal rate per market and rule; the thresholds are recorded in `runs.config_json`.
+### Screening signals (Phase 7): `reports/<date>/screen_signals.{csv,parquet}`
+*Screening signals for human review, not investment advice.* The file's first line (Parquet: metadata
+`disclaimer`) says so. One row per ticker with two independent model views and no combined vote (that comes in Phase 10):
+
+| Model | Spec | Signal rule |
+|---|---|---|
+| A, residual income | [`residual_income.md`](docs/models/residual_income.md) | ROE_0 = TTM NI to common / avg common equity, clipped to [−10%, 35%], fading linearly to `r = 10y yield + 5%` over 10 years. BUY if MoS ≥ +25% and still > 0 at r+1pp; SELL if MoS ≤ −20% and still < 0 at r−1pp |
+| B, P/B ~ ROE (book branch) | [`peer_regression.md`](docs/models/peer_regression.md) | Theil–Sen `ln(P/B) ~ ROE` per GICS sector (Financials, Utilities, Real Estate, Energy, Materials), TSX + US pooled, n ≥ 12 and R² ≥ 0.20. BUY if residual percentile ≤ 20% and upside ≥ +15%; SELL if ≥ 80% and ≤ −15% |
+
+Each model column is `BUY`, `HOLD`, `SELL`, `NO_SIGNAL` (with a reason code) or `NOT_ELIGIBLE` (fails the
+eligibility filter). IFRS 17 life insurers need the after-tax CSM, a manual input in
+[`universe/insurer_csm.csv`](universe/insurer_csm.csv) (`--csm`). A listed insurer with a blank value gets `NO_SIGNAL`
+/ `NEEDS_CSM_INPUT` until a human fills it in. Full per-ticker inputs are in the DuckDB table `signals` (`payload_json`).
+
 Per-ticker fetches run on 4 threads (`--workers`), with a shared rate limit (Yahoo ≈4 req/s, SEC ≤10 req/s).
 Fetch history is in the `fetch_log` table.
 
@@ -52,7 +66,7 @@ For SEC EDGAR in production, set `VALUATION_SEC_USER_AGENT="<app> <contact email
 | US 10y yield | FRED `DGS10` (`fred.stlouisfed.org`) |
 | Daily volume, adjusted close, dividends | Yahoo chart API |
 | Index constituents + GICS sector | iShares XIC holdings (TSX), Wikipedia (S&P 500) |
-| Issuer BVPS (QA reference) | Bank and insurer supplementary financial packs |
+| Issuer BVPS and ROE (QA reference), insurer CSM (manual) | Bank and insurer supplementary financial packs |
 
 Raw responses are cached under `data/raw/<source>/<date>/`. Parsed data goes to DuckDB.
 
@@ -62,7 +76,8 @@ src/valuation/
   providers/  yahoo.py, sec_edgar.py, boc.py,  fetch (cached) + pure parsers
               rates.py
   ingest/     pipeline.py                      universe -> DB
-  models/     book_value.py, eligibility.py    model code (specs: docs/models/*.md)
+  models/     book_value.py, eligibility.py,   model code (specs: docs/models/*.md)
+              residual_income.py (A), peer_regression.py (B)
   ttm.py                                       point-in-time TTM flows + DPS_TTM
   engine.py                                    DB -> model inputs -> valuations table
 config/       liquidity.yaml                   eligibility thresholds
@@ -70,7 +85,8 @@ config/       liquidity.yaml                   eligibility thresholds
   qa/         crosscheck.py                    external cross-check
 universe/     reference.csv                    14-ticker initial-testing subset (~2%)
               tsx_composite.csv, sp500.csv     full lists (iShares XIC holdings, Wikipedia)
-              issuer_sources.csv               issuer BVPS disclosures for QA
+              issuer_sources.csv               issuer BVPS + ROE disclosures for QA
+              insurer_csm.csv                  manual insurer CSM after tax (Model A/B input)
 ```
 
 *Not investment advice.*

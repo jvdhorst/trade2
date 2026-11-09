@@ -85,3 +85,9 @@ MIGRATIONS = [
 def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     for stmt in SCHEMA + MIGRATIONS:
         con.execute(stmt)
+
+# Phase 7 signal rows (Model A + B), full per-ticker payload for audit (report v2).
+SCHEMA.append("""CREATE TABLE IF NOT EXISTS signals (
+        run_id VARCHAR, ticker VARCHAR, as_of DATE, model_versions VARCHAR,
+        a_signal VARCHAR, b_signal VARCHAR, payload_json VARCHAR, PRIMARY KEY (run_id, ticker)
+    )""")

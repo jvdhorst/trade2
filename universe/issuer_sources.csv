@@ -1,5 +1,8 @@
-ticker,period_end,column,recorded_bvps,source,note
-RY.TO,2026-07-31,0,96.73,https://www.rbc.com/investor-relations/_assets-custom/pdf/26q3supp.pdf,RBC Q3 2026 supplementary financial information
-TD.TO,2026-07-31,0,69.69,https://www.td.com/content/dam/tdcom/canada/about-td/pdf/quarterly-results/2026/q3/2026-q3-financial-supppack-en.pdf,TD Q3 2026 supplemental financial information
-BNS.TO,2026-07-31,0,64.99,https://www.scotiabank.com/content/dam/scotiabank/corporate/quarterly-reports/2026/q3/Q326_Supplementary_Financial_Information-EN.pdf,Scotiabank Q3 2026 supplementary financial information
-MFC.TO,2026-06-30,1,27.48,data/issuer/MFC_SIP_2026_Q3_EN.pdf,Manulife Q3 2026 SIP (column 1 = Q2 2026); uploaded by user because manulife.com blocks automated fetches
+ticker,period_end,column,recorded_bvps,source,note,metric,label
+RY.TO,2026-07-31,0,96.73,https://www.rbc.com/investor-relations/_assets-custom/pdf/26q3supp.pdf,RBC Q3 2026 supplementary financial information,bvps,
+TD.TO,2026-07-31,0,69.69,https://www.td.com/content/dam/tdcom/canada/about-td/pdf/quarterly-results/2026/q3/2026-q3-financial-supppack-en.pdf,TD Q3 2026 supplemental financial information,bvps,
+BNS.TO,2026-07-31,0,64.99,https://www.scotiabank.com/content/dam/scotiabank/corporate/quarterly-reports/2026/q3/Q326_Supplementary_Financial_Information-EN.pdf,Scotiabank Q3 2026 supplementary financial information,bvps,
+MFC.TO,2026-06-30,1,27.48,data/issuer/MFC_SIP_2026_Q3_EN.pdf,Manulife Q3 2026 SIP (column 1 = Q2 2026); uploaded by user because manulife.com blocks automated fetches,bvps,
+RY.TO,2026-07-31,4,0.17375,https://www.rbc.com/investor-relations/_assets-custom/pdf/26q3supp.pdf,RBC reported ROE Q3/26 Q2/26 Q1/26 Q4/25 = 17.9 17.2 17.6 16.8 (mean recorded as a decimal),roe,Return on common equity \(ROE\)
+TD.TO,2026-07-31,4,0.137,https://www.td.com/content/dam/tdcom/canada/about-td/pdf/quarterly-results/2026/q3/2026-q3-financial-supppack-en.pdf,TD ROE reported Q3/26 Q2/26 Q1/26 Q4/25 = 15.8 14.7 13.6 10.7,roe,Return on common equity . reported
+BNS.TO,2026-07-31,4,0.12325,https://www.scotiabank.com/content/dam/scotiabank/corporate/quarterly-reports/2026/q3/Q326_Supplementary_Financial_Information-EN.pdf,Scotiabank ROE reported Q3/26 Q2/26 Q1/26 Q4/25 = 14.1 13.1 11.1 11.0,roe,ROE \(%\)

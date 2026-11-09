@@ -1,0 +1,5 @@
+ticker,period_end,filed_date,csm_after_tax,adjusted_bvps_reported,source,note
+MFC.TO,2026-06-30,2026-08-14,22668316000,41.12,data/issuer/MFC_SIP_2026_Q3_EN.pdf,"Manulife SIP Q3 2026, column Q2 2026: adjusted BVPS 41.12 - BVPS 27.48 = 13.64 CSM net of NCI after tax per share x 1661.9M common shares (issuer count). filed_date = period end + 45 days (the same estimate as our Yahoo balance sheet; the issuer released Q2 earlier). Hand-read; the PDF is not in git (manulife.com blocks automated fetches)."
+SLF.TO,2026-06-30,2026-08-14,,,,NEEDS HUMAN INPUT: CSM after tax (net of NCI) from the Sun Life supplementary information package for this quarter
+GWO.TO,2026-06-30,2026-08-14,,,,NEEDS HUMAN INPUT: CSM after tax (net of NCI) from the Great-West Lifeco supplementary information package for this quarter
+IAG.TO,2026-06-30,2026-08-14,,,,NEEDS HUMAN INPUT: CSM after tax from the iA Financial supplementary information package for this quarter

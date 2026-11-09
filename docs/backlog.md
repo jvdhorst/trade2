@@ -92,6 +92,11 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 - 2026-11-09: Phase 7. Model A + Model B book branch, report v2 (no vote). Parameters as approved, not tuned.
   ROE_PERIOD_MISMATCH on 124 TSX / 78 US names traces back to P6-8 (TSX balance-sheet filed date) and to Yahoo NI
   being newer than EDGAR's balance sheet for US names; flagged, not changed.
+- 2026-11-09: AN's 10 additional models proposal (`docs/models/proposals/additional_models.md`) accepted
+  as a proposal. Only the new document is taken; the planning-doc edits on `claude/an-additional-models`
+  are dropped. Its shortlist (H shareholder yield, J EBIT yield + ROC, G Altman Z'' veto) is for after Phase 10.
+- 2026-11-09: insurers without a sourced CSM (SLF, GWO, IAG) stay `NO_SIGNAL` / `NEEDS_CSM_INPUT` (user
+  decision). No manual inputs will be added for now.
 
 ## Next up (PM selection)
 1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.

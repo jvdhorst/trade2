@@ -68,3 +68,20 @@ def test_fred_missing_values_and_old_header():
     assert rates.parse_fred_csv(text) == [(date(2024, 1, 2), "US10Y", pytest.approx(0.0395),
                                            "fred")]
     assert rates.parse_fred_csv("") == []
+
+
+def test_fred_chunks_concatenate(monkeypatch, tmp_path):
+    from valuation.providers.base import RawCache
+
+    urls = []
+
+    def fake_get(url):
+        urls.append(url)
+        d = url.split("cosd=")[1][:10]
+        return f"observation_date,DGS10\n{d},4.00\n"
+
+    rp = rates.RatesProvider(RawCache(tmp_path, date(2026, 11, 9)))
+    monkeypatch.setattr(rp, "_get_text", fake_get)
+    rows = rates.parse_fred_csv(rp.fred_10y(date(2026, 11, 9), 3 * 365))
+    assert len(urls) == 2 and len(rows) == 2  # 1095 days -> two <=730-day chunks
+    assert all("coed=" in u for u in urls)

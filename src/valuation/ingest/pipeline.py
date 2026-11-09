@@ -39,11 +39,14 @@ def upsert_prices(con: duckdb.DuckDBPyConnection, bars: list[PriceBar]) -> None:
 
 def upsert_security(con, ticker: str, row: dict, profile: dict) -> None:
     con.execute(
-        "INSERT OR REPLACE INTO securities VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO securities (ticker, exchange, name, currency, financial_currency,"
+        " sector, industry, cik, share_classes, share_conversion, updated_at, gics_sector,"
+        " gics_sub_industry) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [ticker, row.get("exchange") or profile.get("exchange"), profile.get("name"),
          profile.get("currency"), profile.get("financial_currency"), profile.get("sector"),
          profile.get("industry"), row.get("cik") or None, int(row.get("share_classes") or 1),
-         float(row.get("share_conversion") or 1), datetime.now()],
+         float(row.get("share_conversion") or 1), datetime.now(),
+         row.get("gics_sector") or None, row.get("gics_sub_industry") or None],
     )
 
 

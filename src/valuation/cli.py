@@ -21,9 +21,13 @@ def main(argv: list[str] | None = None) -> int:
     pv.add_argument("--as-of", type=date.fromisoformat, default=date.today())
     pv.add_argument("--min-peers", type=int, default=5)
     pv.add_argument("--out", default="reports")
+    pu = sub.add_parser("universe", help="rebuild TSX Composite + S&P 500 lists")
+    pu.add_argument("--out", default="universe")
     pc = sub.add_parser("crosscheck", help="compare book_value vs Yahoo reference metrics")
     pc.add_argument("--as-of", type=date.fromisoformat, default=date.today())
-    pc.add_argument("--tolerance", type=float, default=0.05)
+    pc.add_argument("--tolerance", type=float, default=None)
+    pc.add_argument("--issuer", action="store_true",
+                    help="compare against issuer-reported BVPS (universe/issuer_sources.csv)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -46,10 +50,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"run {info['run_id']}: {len(df)} valued -> {csv_path}, {pq_path}")
         for k, v in info["skipped"].items():
             print(f"  skipped {k}: {v}")
+    elif args.cmd == "universe":
+        from .ingest.universe_build import build
+
+        res = build(args.out)
+        print(f"TSX Composite: {res['tsx']} rows, S&P 500: {res['sp500']} rows")
+        bad = {k: v for k, v in res["problems"].items() if v}
+        for k, v in bad.items():
+            print(f"  {k}: {'; '.join(v)}")
+        return 1 if bad else 0
     elif args.cmd == "crosscheck":
+        if args.issuer:
+            from .qa.issuer_check import issuer_check
+
+            df = issuer_check(con, args.as_of, tolerance=args.tolerance or 0.03)
+            print(df.to_string(index=False))
+            return 0 if (df["status"] == "pass").all() else 1
         from .qa.crosscheck import crosscheck_book_value
 
-        df = crosscheck_book_value(con, args.as_of, args.tolerance)
+        df = crosscheck_book_value(con, args.as_of, args.tolerance or 0.05)
         print(df.to_string(index=False))
         return 0 if df["pass"].all() else 1
     return 0

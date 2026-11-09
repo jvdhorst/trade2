@@ -50,8 +50,8 @@ def _filings(con, ticker: str, source: str) -> list[bv.Filing]:
 def build_inputs(con: duckdb.DuckDBPyConnection, as_of: date):
     inputs, skipped = [], {}
     secs = con.execute(
-        "SELECT ticker, currency, sector, industry, share_classes, share_conversion "
-        "FROM securities ORDER BY ticker"
+        "SELECT ticker, currency, coalesce(gics_sector, sector), industry, share_classes, "
+        "share_conversion FROM securities ORDER BY ticker"
     ).fetchall()
     for ticker, currency, sector, industry, classes, conversion in secs:
         conversion = conversion or 1.0

@@ -1,4 +1,4 @@
-# Model spec: Book Value vs Share Price (`book_value`, v0.1.0)
+# Model spec: Book Value vs Share Price (`book_value`, v0.2.0)
 
 Owner: AN · Tests: QA (`tests/unit/test_book_value_spec.py`) · Code: `src/valuation/models/book_value.py`
 
@@ -25,7 +25,7 @@ brands) book value understates economic value, so the result is only a sanity me
 | `fx_rate` | Trading-ccy units per 1 reporting-ccy unit (1.0 if same currency) | ratio |
 | `period_end`, `filed_date` | Balance-sheet date; date the data became public | date |
 | `share_classes` | Number of common share classes summed into `shares_outstanding` (default 1) | int |
-| `sector`, `industry` | Peer grouping keys (may be missing) | str |
+| `sector`, `industry` | Peer grouping keys (may be missing). **v0.2.0:** `sector` = GICS sector from the universe file when present, else the Yahoo sector. `industry` = Yahoo industry | str |
 
 ### Filing selection (no look-ahead)
 `select_latest_filing(filings, as_of)` returns the filing with the **latest `period_end`** among those
@@ -155,6 +155,8 @@ Reference set: RY.TO, TD.TO, BNS.TO (banks with preferreds), ENB.TO, CNQ.TO, ABX
 - Compare `bvps` with Yahoo `bookValue` and `pb` with Yahoo `priceToBook`. Tolerance ±5%. Explain every miss
   (common causes: Yahoo excludes or includes preferreds differently, uses a different share count date,
   or does not FX-convert).
+- Issuer check (automated): `valuation crosscheck --issuer` reads "book value per (common) share" from the
+  PDFs listed in `universe/issuer_sources.csv`. Tolerance ±3%.
 - Results: `docs/qa/book_value-validation.md`.
 - Hand-check three banks against the BVPS figure printed in their quarterly supplementary pack. Tolerance ±3%.
 
@@ -174,4 +176,9 @@ from valuation.models.book_value import (
   `PeerValuation` fields: `ticker, result, peer_level, n_peers, peer_median_pb, fair_value, upside,
   pb_percentile, flags: frozenset[str]` (the company flags plus any peer flags).
 - `rank(valuations: list[PeerValuation]) -> list[PeerValuation]` sorts according to the ranking rule above.
-- `MODEL_VERSION = "book_value/0.1.0"`
+- `MODEL_VERSION = "book_value/0.2.0"`
+
+## Changelog
+- **0.2.0:** peer `sector` uses GICS (iShares XIC / S&P 500 constituent data) instead of Yahoo's non-GICS
+  sector, which was sometimes missing (RY.TO). The formulas are unchanged.
+- **0.1.0:** initial version.

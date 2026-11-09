@@ -1,4 +1,4 @@
-"""Book value vs share price model. Spec: docs/models/book_value.md (v0.1.0)."""
+"""Book value vs share price model. Spec: docs/models/book_value.md (v0.2.0)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import statistics
 from dataclasses import dataclass, field
 from datetime import date
 
-MODEL_VERSION = "book_value/0.1.0"
+MODEL_VERSION = "book_value/0.2.0"
 STALE_DAYS = 456  # ~15 months
 DEFAULT_MIN_PEERS = 5
 

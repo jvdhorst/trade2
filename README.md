@@ -13,6 +13,8 @@ uv run valuation init                                 # create data/valuation.du
 uv run valuation ingest --universe universe/reference.csv   # prices, fundamentals, FX
 uv run valuation value                                # writes reports/<date>/screen_book_value.{csv,parquet}
 uv run valuation crosscheck                           # compare against Yahoo's published book value
+uv run valuation crosscheck --issuer                  # compare against issuer supplementary packs
+uv run valuation universe                             # rebuild TSX Composite + S&P 500 lists
 uv run pytest                                         # offline tests (network tests are deselected)
 ```
 For SEC EDGAR in production, set `VALUATION_SEC_USER_AGENT="<app> <contact email>"`, as SEC's fair-access policy asks.
@@ -23,6 +25,8 @@ For SEC EDGAR in production, set `VALUATION_SEC_USER_AGENT="<app> <contact email
 | Prices, profile, TSX fundamentals | Yahoo Finance (via `yfinance`, unofficial) |
 | US fundamentals (point-in-time) | SEC EDGAR XBRL `companyfacts` |
 | USD/CAD | Bank of Canada Valet |
+| Index constituents + GICS sector | iShares XIC holdings (TSX), Wikipedia (S&P 500) |
+| Issuer BVPS (QA reference) | Bank and insurer supplementary financial packs |
 
 Raw responses are cached under `data/raw/<source>/<date>/`. Parsed data goes to DuckDB.
 
@@ -36,6 +40,8 @@ src/valuation/
   report/     screen.py                        CSV + Parquet
   qa/         crosscheck.py                    external cross-check
 universe/     reference.csv                    14-ticker initial-testing subset (~2%)
+              tsx_composite.csv, sp500.csv     full lists (iShares XIC holdings, Wikipedia)
+              issuer_sources.csv               issuer BVPS disclosures for QA
 ```
 
 *Not investment advice.*

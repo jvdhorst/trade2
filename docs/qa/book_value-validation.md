@@ -50,19 +50,40 @@ Yahoo's `priceToBook` for BRK-B (0.0011) mixes the B price with A-share book val
    "0 errors". Fixes: validation plus retry with backoff, empty responses are never cached, and failures are
    reported per ticker.
 
-## 4. Open: TD, BNS, MFC (hypothesis: Yahoo definition, not our error)
-- BNS: Yahoo's 73.15 = (total equity − NCI) / shares = (90,622 − 1,471) / 1,218.8M. Yahoo **includes** ~$9.9B of
-  preferred shares and other equity instruments (LRCNs/AT1). We exclude them, as banks do when reporting common BVPS.
-- TD: Yahoo's 75.62 sits between common-only (69.66) and including preferreds (77.52), so the exact definition is unclear.
-- RY: Yahoo excludes preferreds and matches us. So Yahoo is **inconsistent across banks**, and it cannot be the
-  final reference for financials.
-- **Action (P2-6, human):** compare our BVPS against the "book value per common share" line in the
-  Q3 2026 supplementary financial packs for TD, BNS and RY, and the Q2 2026 pack for MFC. Tolerance ±3%.
+## 4. Issuer cross-check: resolved (P2-6)
+`valuation crosscheck --issuer` reads "book value per (common) share" straight from each issuer's supplementary
+pack (sources: `universe/issuer_sources.csv`). Tolerance ±3%.
+
+| Ticker | Period | Issuer BVPS | Ours | diff | Yahoo `bookValue` |
+|---|---|---|---|---|---|
+| RY.TO | 2026-07-31 | 96.73 | 96.70 | −0.03% | 96.73 |
+| TD.TO | 2026-07-31 | 69.69 | 69.66 | −0.04% | 75.62 (wrong) |
+| BNS.TO | 2026-07-31 | 64.99 | 64.99 | 0.00% | 73.15 (wrong: includes preferreds/LRCNs) |
+| MFC.TO | 2026-06-30 | 27.48 | 28.04 | +2.04% | 31.24 (wrong) |
+
+**Conclusion:** our common-equity definition matches what issuers report. Yahoo's `bookValue` is **not a reliable
+reference for financials** (it is inconsistent across banks). It stays as a secondary check, and issuer filings are the
+primary reference.
+
+**MFC +2.0%, explained:** Yahoo's total equity includes **participating policyholders' equity** (C$937M at Q2), and
+Yahoo's "Common Stock Equity" also includes it. Removing it gives (54,927 − 1,666 − 6,660 − 937) / 1,661.9M =
+27.48, an exact match. Yahoo's "Other Equity Interest" field holds it for MFC, but that field means different things
+for other issuers (for RY it is LRCNs already counted in preferreds), so it can't simply be subtracted everywhere.
+Follow-up for AN: add an input for non-common equity such as participating policyholders' equity, which needs a
+source that tags it.
+
+The MFC pack was uploaded by the user because www.manulife.com blocks automated fetches. It lives in
+`data/issuer/` (not committed). The hand-read value is recorded in `issuer_sources.csv`, so the check still runs
+without the file.
+
+**Analyst note (insurers):** under IFRS 17, Manulife also reports an *adjusted* BVPS (41.78 at Q3) that adds the
+post-tax contractual service margin (future profit already locked in). Plain P/B therefore overstates how expensive
+insurers look. Address this in Phase 3 (an insurer-specific multiple).
 
 ## 5. Known limitations
 - TSX `filed_date` is estimated (period end + 45 days), so look-ahead protection for TSX names is approximate.
-- Yahoo sector/industry is not GICS. With only 14 tickers, most peer groups fall below 5. FEW_PEERS and
-  INDUSTRY_FALLBACK dominate, and the peer fair value **is not meaningful until the full universe is loaded (P1-2)**.
+- From v0.2.0 the peer sector is GICS (from the universe files). Industry is still Yahoo's. With only 14 tickers,
+  most groups fall below 5, so the peer fair value **is not meaningful until a full-universe ingest (P1-8)**.
   Per-company BVPS and P/B are validated independently of this.
-- Yahoo's sector is sometimes missing (RY.TO came back without it on some calls). The ticker is still valued
-  but gets no peer group.
+- Yahoo's sector is sometimes missing (RY.TO). This no longer matters for peers now that GICS comes from the
+  universe file.

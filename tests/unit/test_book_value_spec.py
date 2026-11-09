@@ -1,4 +1,4 @@
-"""Spec tests for the book_value model (docs/models/book_value.md, v0.1.0).
+"""Spec tests for the book_value model (docs/models/book_value.md, v0.2.0).
 
 Written from the spec only (not from the implementation). Golden values are
 expressed as exact arithmetic expressions rather than the 6-significant-figure
@@ -58,7 +58,7 @@ def compute(**overrides):
 
 
 def test_model_version():
-    assert MODEL_VERSION == "book_value/0.1.0"
+    assert MODEL_VERSION == "book_value/0.2.0"
 
 
 def test_inputs_defaults():

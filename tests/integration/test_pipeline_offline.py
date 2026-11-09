@@ -52,8 +52,9 @@ def _bs(period, equity, shares, pref=0.0):
 def con(tmp_path):
     universe = tmp_path / "u.csv"
     universe.write_text(
-        "ticker,exchange,cik,share_classes,share_conversion\n"
-        "CAN.TO,TSX,,1,1\nUSR.TO,TSX,,1,1\nUSA,NYSE,0000000001,1,1\nBRK,NYSE,,2,1500\n"
+        "ticker,exchange,cik,share_classes,share_conversion,gics_sector\n"
+        "CAN.TO,TSX,,1,1,Financials\nUSR.TO,TSX,,1,1,\nUSA,NYSE,0000000001,1,1,\n"
+        "BRK,NYSE,,2,1500,\n"
     )
     yahoo = FakeYahoo({
         "CAN.TO": {"info": {"currency": "CAD", "financialCurrency": "CAD", "sector": "S",
@@ -125,7 +126,14 @@ def test_valuation_rows_persisted_with_inputs(con):
     run_book_value(con, AS_OF, min_peers=1)
     n, versions = con.execute(
         "SELECT count(*), list(DISTINCT model_version) FROM valuations").fetchone()
-    assert n == 4 and versions == ["book_value/0.1.0"]
+    assert n == 4 and versions == ["book_value/0.2.0"]
     nulls = con.execute("SELECT count(*) FROM valuations WHERE inputs_json IS NULL").fetchone()
     assert nulls[0] == 0
 
+
+
+def test_peer_sector_prefers_gics_over_yahoo(con):
+    df, _ = run_book_value(con, AS_OF, min_peers=1)
+    sectors = df.set_index("ticker")["sector"]
+    assert sectors["CAN.TO"] == "Financials"  # GICS from the universe file
+    assert sectors["USA"] == "S"  # no GICS: Yahoo sector

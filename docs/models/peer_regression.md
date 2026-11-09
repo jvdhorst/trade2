@@ -52,13 +52,13 @@ n_fit = |F|, n_scored = |S|
 4. `ŷ_i = a + β·x_i`; `R² = 1 − Σ(y − ŷ)² / Σ(y − ȳ)²` over F (may be negative).
 
 Every SectorFit field is computed when possible: `lo, hi` if n_fit ≥ 1; `slope, intercept` if F has a pair with
-distinct x; `r2` if slope exists and `Σ(y − ȳ)² > 0`; else None. `status` = the **first** failing check:
+distinct x; `r2` if slope exists and `Σ(y − ȳ)² > 1e-12`; else None. `status` = the **first** failing check:
 
 | Status | Condition |
 |---|---|
 | `FEW_NAMES` | `n_fit < 12` |
 | `NO_X_VARIATION` | all `x_i` in F equal |
-| `ZERO_VARIANCE` | `Σ(y − ȳ)² = 0` |
+| `ZERO_VARIANCE` | `Σ(y − ȳ)² ≤ 1e-12` (floating-point zero: identical P/Bs leave a rounding residue) |
 | `LOW_R2` | `r2 < 0.20` |
 | `OK` | otherwise (`n_fit = 12` and `r2 = 0.20` pass) |
 
@@ -151,7 +151,7 @@ slope **1.1467076579307753**, intercept **0.29643019419066896**, r2 **−0.13506
 - Multiplying every price in a sector by k > 0: intercept → intercept + ln k (G2 × 2: 0.39617492265580084 =
   −0.2969722579041446 + ln 2), slope, r2, residuals, resid_pct, upside and signals unchanged.
 - Adding an ineligible, a needs_csm, a NEG_BOOK, a roe-None or a non-book-sector name never changes any SectorFit.
-- Adding a negative-ROE eligible name never changes the fit, but does change resid_pct of the others (it is in S).
+- Adding a negative-ROE eligible name never changes the fit (except `n_scored` + 1), but does change resid_pct of the others (it is in S).
 - Permuting the input order permutes the results identically; fits are unchanged.
 - `implied_upside == exp(−residual) − 1` and `fair_value/price == fitted_pb/pb` (1e-12).
 - Results are in input order, one per PBObs; each name's `n_fit`, `r2` come from its sector's fit (None for non-book sectors).
@@ -191,3 +191,5 @@ needs a PM decision.
 
 ## Changelog
 - **0.1.0:** initial version, book branch from proposal §3. Proposal G1 arithmetic verified, no corrections.
+  QA review: ZERO_VARIANCE uses a 1e-12 tolerance; the "negative-ROE name never changes the fit" property excludes
+  `n_scored`, which counts it.

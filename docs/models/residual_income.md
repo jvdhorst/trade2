@@ -52,6 +52,7 @@ pb       = price / B_0                          if B_0 > 0, else None
 ROE_raw  = roe_raw(ni, CE_end + add, CE_start + add)   (CE_start None stays None)
 roe_base = (ROE_raw + h[0] + h[1]) / 3  if sector ∈ CYCLICAL and len(h) ≥ 2 and h[0], h[1] not None  → roe_basis "3y_avg"
            else ROE_raw                                                                              → roe_basis "ttm"
+           (ROE_raw None → roe_base, ROE_0 and roe_basis None)
 ROE_0    = clip_roe(roe_base)
 r        = rf + ERP
 V_RI, V_up, V_down = ri_value(B_0, ROE_0, r, b), at r + 0.01, at r − 0.01     (only if pb is not None)
@@ -117,6 +118,8 @@ ccy, raw units; blank = needs human input; `adjusted_bvps_reported` = issuer's o
 - Row used: `period_end ==` the balance-sheet `period_end` used for `bvps`, and `filed_date ≤ as_of` (later rows
   don't exist); several such rows → latest `filed_date`. No such row, or blank `csm_after_tax` → `csm_after_tax = None`
   → `NEEDS_CSM_INPUT`. Never guessed or carried from another period.
+- `csm_after_tax` is ignored when `csm_relevant` is False. With CSM applying and CE_end None, B_0 is None → `NEG_BOOK`
+  (precedence #3 before `NO_EQUITY`).
 - Applied: `B_0 = (CE_end + csm)/shares × fx`; `ROE_raw = NI / (avg_CE + csm)` (= `roe_raw(NI, CE_end + csm, CE_start +
   csm)`). The current CSM is used at both ends (simplification; recorded). Model B uses the same B_0 and ROE_raw.
 
@@ -256,11 +259,13 @@ One row per universe ticker (valued or not), sorted by ticker. Columns: `ticker,
 elig_fail_reason, price, bvps (= Model A b0, CSM-adjusted when flagged), pb, roe0, a_signal, a_no_signal_reason, a_mos,
 a_v_ri, a_mos_up, a_mos_down, a_justified_pb, b_signal, b_no_signal_reason, b_implied_upside, b_resid_pct, b_fitted_pb,
 b_fair_value, flags` (`flags` = sorted, comma-joined union of eligibility, Model A and Model B flags). A ticker with no
-usable balance sheet gets `NOT_ELIGIBLE` if not eligible, else `NO_SIGNAL` with reason `NO_DATA`, in both models.
+usable balance sheet gets `NOT_ELIGIBLE` if not eligible, else `NO_SIGNAL` with reason `NO_DATA`, in both models
+(in practice always `NOT_ELIGIBLE`: with no balance sheet there is no market cap, so eligibility rule E3 fails).
 The first CSV line is the comment `# Screening signals for human review, not investment advice. Models:
 residual_income/0.1.0, peer_regression/0.1.0. as_of <date>. No combined vote (Phase 10).`; the parquet stores the same
 text as file metadata key `disclaimer`. No vote and no `SCREEN_` labels in Phase 7. Model B: `peer_regression.md`.
 
 ## Changelog
 - **0.1.0:** initial version from proposal §2. Proposal arithmetic verified (V_RI 61.13, 58.85, justified P/B 2.22,
-  MoS +1.9% / +27.4% / +22.6%); no corrections. B_1 is 54.035 exactly (proposal prints 54.03).
+  MoS +1.9% / +27.4% / +22.6%); no corrections. B_1 is 54.035 exactly (proposal prints 54.03). QA review
+  clarifications: roe_basis None without ROE_raw; NO_DATA is unreachable in practice; CSM edge cases.

@@ -34,3 +34,56 @@ def test_ignores_lookalike_labels():
 def test_missing_label_or_column():
     assert extract_bvps(["nothing here 12.34"]) is None
     assert extract_bvps([LINES["BNS"]], column=10) is None
+
+
+# --- ROE parser (Model A external check, docs/models/residual_income.md §External check) ---
+
+from valuation.qa.issuer_check import extract_roe  # noqa: E402
+
+ROE_LINES = {
+    "RY": "Return on common equity (ROE) 5 17.9% 17.2% 17.6% 16.8% 17.3% 14.2% 16.8% 14.3%",
+    "TD": "Return on common equity – reported  1  3  15.8 %  14.7 %  13.6 %  10.7 %  11.3 %  "
+          "39.1 %  10.1 %  13.4 %  (1.0) %  14.6 %",
+    "BNS": "ROE (%)⁽¹⁾ 14.1                          13.1               11.1               "
+           "11.0            12.2",
+}
+RY_LABEL = r"Return on common equity \(ROE\)"
+TD_LABEL = r"Return on common equity . reported"
+BNS_LABEL = r"ROE \(%\)"
+
+
+@pytest.mark.parametrize("key,label,expected", [
+    ("RY", RY_LABEL, [0.179, 0.172, 0.176, 0.168]),
+    ("TD", TD_LABEL, [0.158, 0.147, 0.136, 0.107]),
+    ("BNS", BNS_LABEL, [0.141, 0.131, 0.111, 0.110]),
+])
+def test_extract_roe_real_line_formats(key, label, expected):
+    got = extract_roe(["header", ROE_LINES[key], "footer"], label, 4)
+    assert got == pytest.approx(expected, rel=1e-12)
+    assert extract_roe([ROE_LINES[key]], label) == pytest.approx(expected, rel=1e-12)
+
+
+def test_extract_roe_td_negative_in_parentheses():
+    got = extract_roe([ROE_LINES["TD"]], TD_LABEL, 9)
+    assert len(got) == 9
+    assert got[8] == pytest.approx(-0.010, rel=1e-12)
+    assert got[:4] == pytest.approx([0.158, 0.147, 0.136, 0.107], rel=1e-12)
+
+
+def test_extract_roe_bns_reported_line_first_wins():
+    lines = [ROE_LINES["BNS"], "Adjusted results", "ROE (%) 14.2  13.2  11.3  11.2"]
+    assert extract_roe(lines, BNS_LABEL, 4) == pytest.approx([0.141, 0.131, 0.111, 0.110])
+    assert extract_roe(lines, BNS_LABEL, 2) == pytest.approx([0.141, 0.131])
+
+
+def test_extract_roe_ignores_lookalike_label():
+    lines = ["Adjusted ROE 4,5 18.1% 17.4% 17.9% 17.0%", ROE_LINES["RY"]]
+    assert extract_roe(lines, RY_LABEL, 4) == pytest.approx([0.179, 0.172, 0.176, 0.168])
+    assert extract_roe(["Adjusted ROE 4,5 18.1% 17.4% 17.9% 17.0%"], RY_LABEL, 4) is None
+
+
+def test_extract_roe_too_few_values_or_missing():
+    assert extract_roe(["ROE (%) 14.2  13.2"], BNS_LABEL, 4) is None
+    assert extract_roe([ROE_LINES["BNS"]], BNS_LABEL, 6) is None
+    assert extract_roe(["nothing here 12.3 %"], RY_LABEL, 1) is None
+    assert extract_roe([], RY_LABEL, 4) is None

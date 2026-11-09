@@ -8,11 +8,21 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 
 import requests
 
-from .base import GOODWILL, INTANGIBLES, NCI, PREFERRED, SHARES, TOTAL_EQUITY, Fact, RawCache
+from .base import (
+    GOODWILL,
+    INTANGIBLES,
+    NCI,
+    NI_COMMON_Q,
+    PREFERRED,
+    SHARES,
+    TOTAL_EQUITY,
+    Fact,
+    RawCache,
+)
 
 SOURCE = "sec_edgar"
 FORMS = {"10-K", "10-Q", "10-K/A", "10-Q/A", "20-F", "40-F"}
@@ -59,6 +69,18 @@ PREFERRED_CHAIN = (
 )
 
 
+# Income-statement concepts for quarterly NI to common (spec docs/models/ttm.md).
+NI_AVAILABLE = "NetIncomeLossAvailableToCommonStockholdersBasic"
+NI_TOTAL = "NetIncomeLoss"
+PREF_DIV_CHAIN = (
+    "PreferredStockDividendsAndOtherAdjustments",
+    "PreferredStockDividendsIncomeStatementImpact",
+    "DividendsPreferredStock",
+)
+NI_CONCEPTS = (NI_AVAILABLE, NI_TOTAL, *PREF_DIV_CHAIN)
+TRIM_CONCEPTS = (*CONCEPTS, *NI_CONCEPTS)
+
+
 def _first(at, concepts):
     for c in concepts:
         v = at(c)
@@ -75,7 +97,7 @@ def trim_companyfacts(payload: dict) -> dict:
     return {
         "cik": payload.get("cik"), "entityName": payload.get("entityName"),
         "facts": {
-            "us-gaap": {c: gaap[c] for c in CONCEPTS if c in gaap},
+            "us-gaap": {c: gaap[c] for c in TRIM_CONCEPTS if c in gaap},
             "dei": {c: dei[c] for c in ("EntityCommonStockSharesOutstanding",) if c in dei},
         },
     }
@@ -132,6 +154,92 @@ def parse_companyfacts(ticker: str, payload: dict) -> list[Fact]:
     return facts
 
 
+def _quarters_from_durations(vals: dict[tuple[date, date], float]) -> dict[date, float]:
+    """Discrete quarters {end: value} from one chain's {(start, end): value} (spec steps 1-3)."""
+    def is_q(days: int) -> bool:
+        return 80 <= days <= 100
+
+    q: dict[date, tuple[date, float]] = {}  # end -> (start, value)
+    for (s, e), v in vals.items():  # 1. direct
+        if is_q((e - s).days):
+            q[e] = (s, v)
+    by_start: dict[date, list[date]] = defaultdict(list)
+    for s, e in vals:
+        by_start[s].append(e)
+    derived: dict[date, tuple[date, date, float]] = {}  # 2. difference of cumulatives
+    for s, ends in by_start.items():
+        for e2 in ends:
+            if e2 in q:
+                continue
+            for e1 in ends:
+                if e1 < e2 and (e1 - s).days >= 80 and is_q((e2 - e1).days):
+                    cur = derived.get(e2)
+                    if cur is None or e1 > cur[0] or (e1 == cur[0] and s > cur[1]):
+                        derived[e2] = (e1, s, vals[(s, e2)] - vals[(s, e1)])
+    for e2, (e1, _s, v) in derived.items():
+        q[e2] = (e1 + timedelta(days=1), v)
+    for (s, e), v in vals.items():  # 3. FY minus three quarters
+        if e in q or not 340 <= (e - s).days <= 380:
+            continue
+        chain: list[date] = []
+        # q1 starts at s; each next quarter starts 1-4 days after the previous one ends.
+        for _ in range(3):
+            cands = [qe for qe, (qs, _v) in q.items()
+                     if (qs == s if not chain else 1 <= (qs - chain[-1]).days <= 4)]
+            if not cands:
+                break
+            chain.append(min(cands))
+        if len(chain) == 3 and is_q((e - chain[-1]).days):
+            q[e] = (chain[-1] + timedelta(days=1), v - sum(q[c][1] for c in chain))
+    return {e: v for e, (_s, v) in q.items()}
+
+
+def parse_quarterly_ni(ticker: str, payload: dict) -> list[Fact]:
+    """Point-in-time discrete-quarter NI to common (ni_common_q), spec docs/models/ttm.md §1."""
+    gaap = payload.get("facts", {}).get("us-gaap", {})
+    # concept -> (start, end) -> [(filed, accn, val)]
+    facts: dict[str, dict[tuple[date, date], list[tuple[date, str, float]]]] = {}
+    filed_dates: set[date] = set()
+    for concept in NI_CONCEPTS:
+        per: dict[tuple[date, date], list] = defaultdict(list)
+        for f in gaap.get(concept, {}).get("units", {}).get("USD", []):
+            if f.get("form") not in FORMS or not f.get("start"):
+                continue
+            fd = date.fromisoformat(f["filed"])
+            per[(date.fromisoformat(f["start"]), date.fromisoformat(f["end"]))].append(
+                (fd, f.get("accn", ""), float(f["val"])))
+            filed_dates.add(fd)
+        for versions in per.values():
+            versions.sort()
+        facts[concept] = per
+
+    def snapshot(concept: str, f: date) -> dict[tuple[date, date], float]:
+        out = {}
+        for period, versions in facts[concept].items():
+            known = [v for v in versions if v[0] <= f]
+            if known:
+                out[period] = known[-1][2]  # latest filed, ties -> larger accn
+        return out
+
+    emitted: dict[date, float] = {}
+    out: list[Fact] = []
+    for f in sorted(filed_dates):
+        chain1 = _quarters_from_durations(snapshot(NI_AVAILABLE, f))
+        ni = snapshot(NI_TOTAL, f)
+        prefs = [snapshot(c, f) for c in PREF_DIV_CHAIN]
+        chain2_vals = {}
+        for period, v in ni.items():
+            pref = next((p[period] for p in prefs if period in p), 0.0)
+            chain2_vals[period] = v - pref
+        chain2 = _quarters_from_durations(chain2_vals)
+        for end in sorted(set(chain1) | set(chain2)):
+            v = chain1[end] if end in chain1 else chain2[end]
+            if end not in emitted or emitted[end] != v:
+                emitted[end] = v
+                out.append(Fact(ticker, end, f, NI_COMMON_Q, v, "USD", SOURCE, False))
+    return out
+
+
 class EdgarProvider:
     def __init__(self, cache: RawCache, pause: float = 0.15):
         from .yahoo import RateLimiter
@@ -167,11 +275,12 @@ class EdgarProvider:
 
     def companyfacts(self, cik: str) -> dict:
         cik = str(cik).zfill(10)
-        raw = self.cache.get(SOURCE, f"CIK{cik}")
+        key = f"CIK{cik}_v2"  # v2: trimmed set includes the NI concepts
+        raw = self.cache.get(SOURCE, key)
         if raw is None:
             self.limiter.wait()
             r = requests.get(URL.format(cik=cik), headers={"User-Agent": self.ua}, timeout=60)
             r.raise_for_status()
             raw = trim_companyfacts(r.json())  # 3-9 MB -> only the concepts we parse
-            self.cache.put(SOURCE, f"CIK{cik}", raw)
+            self.cache.put(SOURCE, key, raw)
         return raw

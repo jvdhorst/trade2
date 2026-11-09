@@ -20,6 +20,8 @@ GOODWILL = "goodwill"
 INTANGIBLES = "intangibles"
 SHARES = "shares_outstanding"
 ITEMS = (TOTAL_EQUITY, NCI, PREFERRED, GOODWILL, INTANGIBLES, SHARES)
+# Flow items: one discrete fiscal quarter each (spec docs/models/ttm.md).
+NI_COMMON_Q = "ni_common_q"
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,15 @@ class PriceBar:
     close: float
     adj_close: float | None
     volume: float | None
+    source: str
+
+
+@dataclass(frozen=True)
+class Dividend:
+    ticker: str
+    ex_date: date
+    amount: float  # per share, split-adjusted, trading currency
+    currency: str | None
     source: str
 
 

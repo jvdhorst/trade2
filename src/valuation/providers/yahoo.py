@@ -17,16 +17,20 @@ from .base import (
     GOODWILL,
     INTANGIBLES,
     NCI,
+    NI_COMMON_Q,
     PREFERRED,
     SHARES,
     TOTAL_EQUITY,
+    Dividend,
     Fact,
     PriceBar,
     RawCache,
 )
 
 SOURCE = "yahoo"
+CHART_SOURCE = "yahoo_chart"
 FILING_LAG_DAYS = 45
+ANNUAL_FILING_LAG_DAYS = 90  # fiscal Q4: annual filing deadline (spec docs/models/ttm.md §2)
 PROFILE_KEYS = (
     "symbol", "shortName", "longName", "currency", "financialCurrency", "exchange", "sector",
     "industry", "quoteType", "sharesOutstanding", "marketCap", "bookValue", "priceToBook",
@@ -140,6 +144,70 @@ TS_TYPES = {
     "quarterlyOrdinarySharesNumber": "Ordinary Shares Number",
 }
 SPARK_MAX = 20  # Yahoo rejects more symbols per spark call
+# Income-statement types (spec docs/models/ttm.md §2); annual only identifies fiscal year ends.
+NI_QUARTERLY = "quarterlyNetIncomeCommonStockholders"
+NI_ANNUAL = "annualNetIncomeCommonStockholders"
+TS_FLOW_TYPES = (NI_QUARTERLY, NI_ANNUAL)
+
+
+def _ts_points(payload: dict, type_: str) -> list[dict]:
+    pts = []
+    for res in payload.get("timeseries", {}).get("result", []) or []:
+        for v in res.get(type_) or []:
+            if v and v.get("reportedValue", {}).get("raw") is not None:
+                pts.append(v)
+    return pts
+
+
+def parse_quarterly_ni(ticker: str, ts_payload: dict) -> list[Fact]:
+    """Discrete-quarter NI to common; filed date estimated (+90 days for fiscal Q4, else +45)."""
+    fy_ends = {v["asOfDate"] for v in _ts_points(ts_payload, NI_ANNUAL)}
+    facts = []
+    for v in _ts_points(ts_payload, NI_QUARTERLY):
+        pe = date.fromisoformat(v["asOfDate"][:10])
+        lag = ANNUAL_FILING_LAG_DAYS if v["asOfDate"] in fy_ends else FILING_LAG_DAYS
+        facts.append(Fact(ticker, pe, pe + timedelta(days=lag), NI_COMMON_Q,
+                          float(v["reportedValue"]["raw"]), v.get("currencyCode") or "", SOURCE,
+                          True))
+    return facts
+
+
+def parse_chart(ticker: str, payload: dict) -> tuple[list[PriceBar], list[Dividend]]:
+    """v8 chart response -> daily bars (close, adj_close, volume) and dividends."""
+    results = (payload or {}).get("chart", {}).get("result") or []
+    if not results:
+        return [], []
+    res = results[0]
+    ccy = (res.get("meta") or {}).get("currency")
+    ind = res.get("indicators") or {}
+    quote = (ind.get("quote") or [{}])[0] or {}
+    closes = quote.get("close") or []
+    vols = quote.get("volume") or []
+    adj = ((ind.get("adjclose") or [{}])[0] or {}).get("adjclose") or []
+    bars = []
+    for i, ts in enumerate(res.get("timestamp") or []):
+        c = _num(closes[i]) if i < len(closes) else None
+        if c is None:
+            continue
+        bars.append(PriceBar(ticker, datetime.fromtimestamp(ts, tz=UTC).date(), c,
+                             _num(adj[i]) if i < len(adj) else None,
+                             _num(vols[i]) if i < len(vols) else None, CHART_SOURCE))
+    divs = []
+    for d in ((res.get("events") or {}).get("dividends") or {}).values():
+        amt = _num(d.get("amount"))
+        if amt is not None and d.get("date") is not None:
+            divs.append(Dividend(ticker, datetime.fromtimestamp(d["date"], tz=UTC).date(), amt,
+                                 ccy, CHART_SOURCE))
+    return bars, divs
+
+
+def chart_events_marker(payload: dict) -> str:
+    """Latest dividend/split event timestamp in a chart response ('' if none)."""
+    res = ((payload or {}).get("chart", {}).get("result") or [{}])[0] or {}
+    ev = res.get("events") or {}
+    ts = [int(e.get("date") or 0) for kind in ("dividends", "splits")
+          for e in (ev.get(kind) or {}).values()]
+    return str(max(ts)) if ts else ""
 
 
 def parse_spark(payload: dict) -> list[PriceBar]:
@@ -211,6 +279,8 @@ class YahooProvider:
               "{t}?type=quarterlyStockholdersEquity&period1={p1}&period2={p2}")
     TS_ALL_URL = ("https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/"
                   "timeseries/{t}?type={types}&period1={p1}&period2={p2}")
+    HISTORY_URL = ("https://query2.finance.yahoo.com/v8/finance/chart/{t}?range={r}&interval=1d"
+                   "&events=div%7Csplit&includeAdjustedClose=true")
     SPARK_URL = ("https://query2.finance.yahoo.com/v8/finance/spark?symbols={s}"
                  "&range={r}&interval=1d")
 
@@ -290,18 +360,32 @@ class YahooProvider:
             bars += parse_spark(raw)
         return bars
 
+    def chart(self, ticker: str, range_: str = "5d") -> dict:
+        """Daily bars with volume + adjusted close, dividend and split events (one call)."""
+        key = f"{ticker}.chart_{range_}"
+        raw = self.cache.get(SOURCE, key)
+        if raw is None:
+            raw = self._get_json(self.HISTORY_URL.format(t=ticker, r=range_))
+            if not (raw.get("chart") or {}).get("result"):
+                raise ProviderError(f"{ticker}: chart empty: {str(raw)[:120]}")
+            self.cache.put(SOURCE, key, raw)
+        return raw
+
     def fundamentals(self, ticker: str, fallback_currency: str | None) -> list[Fact]:
-        """Quarterly balance-sheet facts via fundamentals-timeseries (only the fields we use)."""
-        raw = self.cache.get(SOURCE, f"{ticker}.timeseries")
+        """Quarterly balance-sheet + NI facts via fundamentals-timeseries (fields we use only)."""
+        key = f"{ticker}.timeseries_v2"  # v2: adds the NI types
+        raw = self.cache.get(SOURCE, key)
         if raw is None:
             p2 = int(time.time())
             raw = self._get_json(self.TS_ALL_URL.format(
-                t=ticker, types=",".join(TS_TYPES), p1=p2 - 2 * 365 * 86400, p2=p2))
-            self.cache.put(SOURCE, f"{ticker}.timeseries", raw)
+                t=ticker, types=",".join([*TS_TYPES, *TS_FLOW_TYPES]), p1=p2 - 2 * 365 * 86400,
+                p2=p2))
+            self.cache.put(SOURCE, key, raw)
         bs, ccy = timeseries_to_bs(raw)
         if not bs:
             raise ProviderError(f"{ticker}: no fundamentals from timeseries")
-        return parse_balance_sheet(ticker, bs, ccy or fallback_currency or "")
+        return (parse_balance_sheet(ticker, bs, ccy or fallback_currency or "")
+                + parse_quarterly_ni(ticker, raw))
 
     def _fallback_profile(self, ticker: str) -> dict:
         """Trading currency from the chart API, statement currency from the timeseries API.

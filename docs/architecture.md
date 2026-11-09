@@ -1,6 +1,7 @@
 # System architecture (SW)
 
-Status: as built on 2026-11-09 (book_value 0.2.0, incremental ingest). Planned components are dashed.
+Status: as built on 2026-11-09 (book_value 0.2.0, Phase 6 data batch 1 + eligibility 0.1.0). Planned components are
+dashed.
 
 ## Data flow
 ```mermaid
@@ -9,14 +10,14 @@ flowchart LR
         YQ["Yahoo spark<br/>batch prices (20/call)"]
         YT["Yahoo fundamentals-timeseries<br/>TSX balance sheet + currency"]
         YP["Yahoo quoteSummary<br/>profile (monthly, crumb)"]
-        YC["Yahoo chart<br/>fallback prices / currency"]
+        YC["Yahoo chart<br/>daily volume + adj_close + dividends<br/>(2y backfill, then 5d)"]
         EF["SEC EDGAR frames<br/>who filed? (1 call/quarter)"]
         EC["SEC EDGAR companyfacts<br/>US fundamentals + filed dates"]
-        BOC["Bank of Canada Valet<br/>USD/CAD"]
+        BOC["Bank of Canada Valet<br/>USD/CAD + 10y yield"]
         XIC["iShares XIC holdings<br/>TSX Composite + GICS"]
         WIKI["Wikipedia<br/>S&P 500 + GICS + CIK"]
         IR["Issuer supplementary packs<br/>RY / TD / BNS / MFC PDFs"]
-        FRED["FRED DGS10 / BoC 10y<br/>risk-free (planned)"]:::planned
+        FRED["FRED DGS10<br/>US 10y yield"]
     end
 
     subgraph ING["Ingestion (src/valuation/ingest, providers)"]
@@ -30,7 +31,9 @@ flowchart LR
     subgraph DB["DuckDB data/valuation.duckdb"]
         SEC[(securities)]
         PR[(prices_daily)]
-        FU[(fundamentals<br/>keyed by filed_date)]
+        FU[(fundamentals<br/>keyed by filed_date<br/>incl. ni_common_q)]
+        DV[(dividends)]
+        RT[(rates_daily)]
         FX[(fx_daily)]
         REF[(reference_metrics)]
         FL[(fetch_log)]
@@ -43,13 +46,14 @@ flowchart LR
         RI["Model A residual income"]:::planned
         PB["Model B peer regression"]:::planned
         CMP["Model C factor composite"]:::planned
-        ELIG["eligibility filter"]:::planned
+        ELIG["eligibility 0.1.0<br/>config/liquidity.yaml"]
+        TTM["ttm: TTM NI, DPS_TTM"]
         BT["backtest harness"]:::planned
     end
 
     subgraph OUT["Outputs (reports/&lt;date&gt;/)"]
         SCR["screen_book_value.csv / .parquet"]
-        COV["coverage_book_value.csv"]
+        COV["coverage_book_value.csv<br/>+ eligible, elig_fail_reason"]
         SIG["screen_signals.csv<br/>BUY / HOLD / SELL"]:::planned
     end
 
@@ -63,12 +67,15 @@ flowchart LR
     WIKI --> UB
     UB --> UNI --> PIPE
     YQ & YT & YP & YC & EF & EC & BOC --> PIPE
-    FRED -.-> PIPE
+    FRED --> PIPE
     PIPE <--> CACHE
-    PIPE --> SEC & PR & FU & FX & REF & FL
-    SEC & PR & FU & FX --> ENG
+    PIPE --> SEC & PR & FU & FX & REF & FL & DV & RT
+    SEC & PR & FU & FX & DV & RT --> ENG
     ENG --> BV --> VAL
-    ENG -.-> ELIG -.-> RI & PB & CMP
+    ENG --> ELIG --> VAL
+    ENG --> TTM --> VAL
+    ELIG -.-> RI & PB & CMP
+    TTM -.-> RI & CMP
     RI & PB & CMP -.-> SIG
     RI & PB & CMP -.-> BT
     VAL --> SCR & COV
@@ -93,6 +100,9 @@ sequenceDiagram
     P->>Y: spark batch closes (36 calls for 718 tickers)
     Y-->>P: closes
     P->>D: upsert prices_daily
+    P->>Y: chart per ticker (5d; 2y on first load / new dividend or split), ≈4 req/s
+    Y-->>P: close, adj_close, volume, dividends
+    P->>D: upsert prices_daily (volume), dividends
     P->>D: read fetch_log, latest period_end
     alt fundamentals due (new / >7 days / new quarter expected)
         P->>Y: fundamentals-timeseries (threads, ≈4 req/s)
@@ -101,18 +111,19 @@ sequenceDiagram
     P->>E: frames (latest accession per CIK)
     alt new accession
         P->>E: companyfacts (trimmed before caching)
-        P->>D: upsert fundamentals, fetch_log
+        P->>D: upsert fundamentals (+ quarterly NI), fetch_log
     end
+    P->>P: BoC 10y + FRED DGS10 → rates_daily
     CLI->>D: value --universe ... (engine + book_value)
     D-->>CLI: valuations, runs
-    CLI->>CLI: write screen + coverage reports
+    CLI->>CLI: eligibility filter, TTM NI, DPS, rf; write screen + coverage reports
     CLI->>D: crosscheck / crosscheck --issuer (QA)
 ```
 
 ## Key properties
 | Property | How |
 |---|---|
-| No look-ahead | Fundamentals keyed by `filed_date`; `select_latest_filing` and a guard in `compute_book_value`; prices `≤ as_of` |
+| No look-ahead | Fundamentals keyed by `filed_date`; `select_latest_filing` and a guard in `compute_book_value`; quarterly NI emitted per filing date (a derived Q4 gets the 10-K date); prices, dividends and rates `≤ as_of` (not even stored beyond it) |
 | Reproducible | Raw responses cached per day; each valuation row stores `inputs_json`, `model_version`, and the run's git SHA |
 | Idempotent | `INSERT OR REPLACE` upserts on natural keys; re-runs are a no-op |
 | Fast daily run | Batch prices plus a refresh policy (`fetch_log`): ~1 min for 718 tickers; first load ~19 min |

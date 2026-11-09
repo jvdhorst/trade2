@@ -38,6 +38,23 @@ Status: `todo` · `doing` · `done` · `blocked`
 | P2-9 | Rank only in P/B-meaningful sectors; others unranked | AN | Spec v0.3.0 + tests | todo |
 | P2-8 | Non-common equity input (insurers' participating policyholders' equity) | AN | Spec + source identified | todo |
 
+## Phases 6–10: BUY / HOLD / SELL models
+Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [`docs/models/proposals/buy_hold_sell.md`](models/proposals/buy_hold_sell.md)
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| P6-0 | AN proposal on main | PM | done (this PR) |
+| P6-1 | S&P 500 into the main DB | SW | todo |
+| P6-2 | 13-month price/volume history + daily volume | SW | todo |
+| P6-3 | Quarterly NI to common + TTM engine | SW/QA | todo |
+| P6-4 | Dividends per share | SW | todo |
+| P6-5 | Risk-free rates (BoC 10y, FRED DGS10) | SW | todo (host allowed) |
+| P6-6 | Eligibility spec + filter | AN/QA/SW | todo |
+| P7-1..6 | Model A (residual income) + Model B P/B~ROE branch, report v2, insurer CSM | AN/QA/SW | todo |
+| P8-1..3 | Backtest harness (PIT S&P membership, engine, A/B results) | SW/QA | todo |
+| P9 | Data batch 2 + Model C composite | AN/QA/SW | todo |
+| P10 | Model B EV/Sales branch + vote | AN/QA/SW | todo |
+
 ## Decisions log
 - 2026-11-09: initial testing uses a ~2% subset of the universe (14 tickers, `universe/reference.csv`).
   The peer fair value is therefore mostly FEW_PEERS until P1-2.
@@ -48,7 +65,11 @@ Status: `todo` · `doing` · `done` · `blocked`
 
 - 2026-11-09: expanded to the full TSX Composite (user request). S&P 500 not yet ingested.
 
+- 2026-11-09: BUY/HOLD/SELL plan approved with PM defaults: FRED host allowed, AN's parameters
+  as the starting config (no tuning on the holdout), a survivor-biased US backtest accepted as a stated
+  limitation, and one session plus one PR per phase.
+
 ## Next up (PM selection)
-1. P2-9 sector gating (removes the asset-light artifacts at the top of the screen), then P1-10 triage.
+1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.
 2. Phase 3 spec (AN): peer multiples, including an insurer-appropriate measure (adjusted BV with CSM).
 3. P2-8 non-common equity input.

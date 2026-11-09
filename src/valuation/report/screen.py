@@ -58,3 +58,38 @@ def removal_summary(removal: dict[str, dict]) -> list[str]:
             line += "  REVIEW THRESHOLDS"
         lines.append(line)
     return lines
+
+
+SIGNALS_DISCLAIMER = (
+    "Screening signals for human review, not investment advice. Models: residual_income/0.1.0, "
+    "peer_regression/0.1.0. as_of {as_of}. No combined vote (Phase 10)."
+)
+
+
+def write_signals(df: pd.DataFrame, as_of, out_root: str | Path = "reports",
+                  disclaimer: str | None = None) -> tuple[Path, Path]:
+    """Report v2 (spec docs/models/residual_income.md §Report v2): CSV with a comment header line,
+    Parquet with the same text under the schema metadata key `disclaimer`."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    text = disclaimer or SIGNALS_DISCLAIMER.format(as_of=as_of)
+    out = Path(out_root) / str(as_of)
+    out.mkdir(parents=True, exist_ok=True)
+    csv_path, pq_path = out / "screen_signals.csv", out / "screen_signals.parquet"
+    with open(csv_path, "w") as fh:
+        fh.write(f"# {text}\n")
+        df.to_csv(fh, index=False, float_format="%.6g")
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    meta = dict(table.schema.metadata or {})
+    meta[b"disclaimer"] = text.encode()
+    pq.write_table(table.replace_schema_metadata(meta), pq_path)
+    return csv_path, pq_path
+
+
+def signal_summary(counts: dict) -> list[str]:
+    lines = []
+    for model, by_market in counts.items():
+        for market, c in by_market.items():
+            lines.append(f"model {model} {market}: " + ", ".join(f"{k} {v}" for k, v in c.items()))
+    return lines

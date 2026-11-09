@@ -160,13 +160,19 @@ def _ts_points(payload: dict, type_: str) -> list[dict]:
 
 
 def parse_quarterly_ni(ticker: str, ts_payload: dict) -> list[Fact]:
-    """Discrete-quarter NI to common; filed date estimated (+90 days for fiscal Q4, else +45)."""
+    """Discrete-quarter NI to common; filed date estimated (+90 days for fiscal Q4, else +45),
+    capped at the download date stamped in the payload (`_fetched`)."""
     fy_ends = {v["asOfDate"] for v in _ts_points(ts_payload, NI_ANNUAL)}
+    fetched = ts_payload.get("_fetched")
+    observed = date.fromisoformat(fetched) if fetched else None
     facts = []
     for v in _ts_points(ts_payload, NI_QUARTERLY):
         pe = date.fromisoformat(v["asOfDate"][:10])
         lag = ANNUAL_FILING_LAG_DAYS if v["asOfDate"] in fy_ends else FILING_LAG_DAYS
-        facts.append(Fact(ticker, pe, pe + timedelta(days=lag), NI_COMMON_Q,
+        filed = pe + timedelta(days=lag)
+        if observed is not None:  # it was in a response downloaded that day: public by then
+            filed = min(filed, observed)
+        facts.append(Fact(ticker, pe, filed, NI_COMMON_Q,
                           float(v["reportedValue"]["raw"]), v.get("currencyCode") or "", SOURCE,
                           True))
     return facts
@@ -380,6 +386,7 @@ class YahooProvider:
             raw = self._get_json(self.TS_ALL_URL.format(
                 t=ticker, types=",".join([*TS_TYPES, *TS_FLOW_TYPES]), p1=p2 - 2 * 365 * 86400,
                 p2=p2))
+            raw["_fetched"] = date.today().isoformat()  # bounds the estimated filed dates
             self.cache.put(SOURCE, key, raw)
         bs, ccy = timeseries_to_bs(raw)
         if not bs:

@@ -21,7 +21,7 @@ Status: `todo` · `doing` · `done` · `blocked`
 | P1-6 | Parser tests on recorded fixtures | QA | Offline, deterministic | done |
 | P1-7 | Coverage / data-quality report | QA/SW | Missing fields, stale prices, unit mismatches listed | done (`coverage_book_value.csv`) |
 | P1-8 | Full TSX Composite ingest run (215) | SW | ≥95% valued | done (100%) |
-| P1-9 | S&P 500 ingest run (503) | SW | ≥95% valued; run on request | todo |
+| P1-9 | S&P 500 ingest run (503) | SW | ≥95% valued; run on request | done (P6-1: 503/503) |
 | P1-11 | Faster ingestion: batch prices, timeseries fundamentals, EDGAR frames, refresh policy, threads | SW/QA | Facts identical to the old route; daily run ≤2 min | done |
 | P1-10 | QA triage of Yahoo outliers (BIP/BEP units, POW, CLS, AAUC, MDA, GFL, DML, BAM) | QA | Each explained or fixed | todo |
 
@@ -44,12 +44,15 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | ID | Task | Owner | Status |
 |---|---|---|---|
 | P6-0 | AN proposal on main | PM | done (this PR) |
-| P6-1 | S&P 500 into the main DB | SW | todo |
-| P6-2 | 13-month price/volume history + daily volume | SW | todo |
-| P6-3 | Quarterly NI to common + TTM engine | SW/QA | todo |
-| P6-4 | Dividends per share | SW | todo |
-| P6-5 | Risk-free rates (BoC 10y, FRED DGS10) | SW | todo (host allowed) |
-| P6-6 | Eligibility spec + filter | AN/QA/SW | todo |
+| P6-1 | S&P 500 into the main DB | SW | done (503/503 valued; TSX 215/215) |
+| P6-2 | 13-month price/volume history + daily volume | SW | done (spark has no volume → chart API; 2y backfill; daily run 251 s for 718) |
+| P6-3 | Quarterly NI to common + TTM engine | SW/QA | done (AAPL/JPM TTM exact vs 10-K/10-Q; spec `docs/models/ttm.md`) |
+| P6-4 | Dividends per share | SW | done (DPS_TTM; vs Yahoo checked, issuer ±2% check open → P6-7) |
+| P6-5 | Risk-free rates (BoC 10y, FRED DGS10) | SW | done (`rates_daily`, 2013→) |
+| P6-6 | Eligibility spec + filter | AN/QA/SW | done (TSX 9.3% removed, S&P 0.2%) |
+| P6-7 | DPS_TTM vs issuer-declared dividends for the reference set (±2%) | QA | todo |
+| P6-8 | Yahoo balance-sheet filed date: apply the download-date cap used for NI (ttm.md v0.1.1) | SW | todo |
+| P6-9 | Report files per universe (a second `value` run on the same day overwrites the first) | SW | todo |
 | P7-1..6 | Model A (residual income) + Model B P/B~ROE branch, report v2, insurer CSM | AN/QA/SW | todo |
 | P8-1..3 | Backtest harness (PIT S&P membership, engine, A/B results) | SW/QA | todo |
 | P9 | Data batch 2 + Model C composite | AN/QA/SW | todo |
@@ -68,6 +71,10 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 - 2026-11-09: BUY/HOLD/SELL plan approved with PM defaults: FRED host allowed, AN's parameters
   as the starting config (no tuning on the holdout), a survivor-biased US backtest accepted as a stated
   limitation, and one session plus one PR per phase.
+
+- 2026-11-09: Phase 6. History backfill uses `range=2y`, not 13 months (13mo returns ~272 sessions, E6 needs 273).
+  Eligibility removal rates came in at TSX 9.3% / S&P 0.2%, below the expected 15–25% / <10%. Reported to PM,
+  thresholds not tuned. FRED only answers curl-style User-Agents (documented in `providers/rates.py`).
 
 ## Next up (PM selection)
 1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.

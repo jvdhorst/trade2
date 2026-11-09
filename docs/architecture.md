@@ -126,5 +126,5 @@ sequenceDiagram
 | No look-ahead | Fundamentals keyed by `filed_date`; `select_latest_filing` and a guard in `compute_book_value`; quarterly NI emitted per filing date (a derived Q4 gets the 10-K date); prices, dividends and rates `≤ as_of` (not even stored beyond it) |
 | Reproducible | Raw responses cached per day; each valuation row stores `inputs_json`, `model_version`, and the run's git SHA |
 | Idempotent | `INSERT OR REPLACE` upserts on natural keys; re-runs are a no-op |
-| Fast daily run | Batch prices plus a refresh policy (`fetch_log`): ~1 min for 718 tickers; first load ~19 min |
+| Fast daily run | Batch prices, one 5-day chart call per ticker for volume, and a refresh policy (`fetch_log`): 251 s for 718 tickers (≤ 5 min target); first load ~45 min incl. the 2-year history backfill |
 | Spec ↔ code | AN spec → QA tests written from the spec → SW implementation → external cross-checks |

@@ -1,4 +1,4 @@
-"""Spec tests for quarterly NI, TTM and DPS_TTM (docs/models/ttm.md, v0.1.0).
+"""Spec tests for quarterly NI, TTM and DPS_TTM (docs/models/ttm.md, v0.1.1).
 
 Written from the spec only (not from the implementation). EDGAR payloads are
 synthetic companyfacts responses shaped like the real API.
@@ -520,6 +520,110 @@ def test_yahoo_ttm_from_parsed_quarters():
     r = ttm(facts, D("2026-09-13"))  # Q3 not yet (estimated) public
     assert r.value is None
     assert set(r.flags) == {"NO_TTM"}
+
+
+def yahoo_ts(quarters, annuals, fetched=None, ccy="CAD"):
+    """Fundamentals-timeseries payload; quarters/annuals: [(asOfDate, value)]."""
+    p = {"timeseries": {"result": [
+        {
+            "meta": {"type": ["quarterlyNetIncomeCommonStockholders"]},
+            "quarterlyNetIncomeCommonStockholders": [
+                ts_point(x, v, "3M", ccy) for x, v in quarters],
+        },
+        {
+            "meta": {"type": ["annualNetIncomeCommonStockholders"]},
+            "annualNetIncomeCommonStockholders": [
+                ts_point(x, v, "12M", ccy) for x, v in annuals],
+        },
+    ], "error": None}}
+    if fetched is not None:
+        p["_fetched"] = fetched
+    return p
+
+
+def filed_by_pe(facts):
+    return {f.period_end: f.filed_date for f in facts}
+
+
+def test_yahoo_source_and_skips_points_without_raw():
+    q = YAHOO_TS["timeseries"]["result"][0]["quarterlyNetIncomeCommonStockholders"]
+    payload = yahoo_ts([], [("2025-10-31", 19868000000.0)])
+    payload["timeseries"]["result"][0]["quarterlyNetIncomeCommonStockholders"] = [
+        dict(q[0]),
+        {"asOfDate": "2026-01-31", "periodType": "3M", "currencyCode": "CAD",
+         "reportedValue": {}},
+        {"asOfDate": "2026-04-30", "periodType": "3M", "currencyCode": "CAD"},
+    ]
+    facts = yahoo.parse_quarterly_ni("RY.TO", payload)
+    assert [f.period_end for f in facts] == [D("2025-10-31")]
+    assert all(f.source == "yahoo" for f in yahoo.parse_quarterly_ni("RY.TO", YAHOO_TS))
+
+
+# --- v0.1.1: filed_date = min(estimate, _fetched) ---------------------------
+
+YQ = [("2026-01-31", 5100000000.0), ("2026-04-30", 5200000000.0),
+      ("2026-07-31", 5879000000.0)]
+YA = [("2025-10-31", 19868000000.0)]
+
+
+def test_yahoo_fetched_before_estimate_caps_filed_date():
+    # 2026-07-31 + 45 = 2026-09-14 > 2026-08-20 -> capped; the earlier estimates are
+    # before 2026-08-20 and stay.
+    facts = yahoo.parse_quarterly_ni("RY.TO", yahoo_ts(YQ, YA, fetched="2026-08-20"))
+    assert filed_by_pe(facts) == {
+        D("2026-01-31"): D("2026-03-17"),
+        D("2026-04-30"): D("2026-06-14"),
+        D("2026-07-31"): D("2026-08-20"),
+    }
+    assert all(f.filed_estimated is True for f in facts)
+
+
+def test_yahoo_fetched_after_estimate_leaves_it():
+    facts = yahoo.parse_quarterly_ni("RY.TO", yahoo_ts(YQ, YA, fetched="2026-11-09"))
+    assert filed_by_pe(facts) == {
+        D("2026-01-31"): D("2026-01-31") + timedelta(days=45),
+        D("2026-04-30"): D("2026-04-30") + timedelta(days=45),
+        D("2026-07-31"): D("2026-07-31") + timedelta(days=45),
+    }
+
+
+def test_yahoo_fetched_equal_to_estimate():
+    facts = yahoo.parse_quarterly_ni("RY.TO", yahoo_ts(YQ, YA, fetched="2026-09-14"))
+    assert filed_by_pe(facts)[D("2026-07-31")] == D("2026-09-14")
+
+
+def test_yahoo_fetched_caps_fiscal_q4_estimate():
+    # Q4 = annual asOfDate: estimate 2025-10-31 + 90 = 2026-01-29 > 2025-12-15.
+    payload = yahoo_ts([("2025-10-31", 5000000000.0)], YA, fetched="2025-12-15")
+    facts = yahoo.parse_quarterly_ni("RY.TO", payload)
+    assert filed_by_pe(facts) == {D("2025-10-31"): D("2025-12-15")}
+    assert facts[0].filed_estimated is True
+    payload = yahoo_ts([("2025-10-31", 5000000000.0)], YA, fetched="2026-03-01")
+    assert filed_by_pe(yahoo.parse_quarterly_ni("RY.TO", payload)) == {
+        D("2025-10-31"): D("2026-01-29")}
+
+
+def test_yahoo_without_fetched_uses_plain_estimate():
+    payload = yahoo_ts(YQ, YA)
+    assert "_fetched" not in payload
+    assert filed_by_pe(yahoo.parse_quarterly_ni("RY.TO", payload)) == {
+        D("2026-01-31"): D("2026-03-17"),
+        D("2026-04-30"): D("2026-06-14"),
+        D("2026-07-31"): D("2026-09-14"),
+    }
+
+
+def test_yahoo_ttm_respects_capped_filed_date():
+    quarters = [("2025-07-31", 4900000000.0), ("2025-10-31", 5000000000.0)] + YQ
+    facts = yahoo.parse_quarterly_ni("RY.TO", yahoo_ts(quarters, YA, fetched="2026-08-20"))
+    r = ttm(facts, D("2026-08-19"))  # before _fetched: the capped Q3 2026 is not visible
+    assert r.period_end == D("2026-04-30")
+    assert r.value == approx(4900000000.0 + 5000000000.0 + 5100000000.0 + 5200000000.0)
+    assert r.filed_date == D("2026-06-14")
+    r = ttm(facts, D("2026-08-20"))  # on _fetched it is
+    assert r.period_end == D("2026-07-31")
+    assert r.value == approx(5000000000.0 + 5100000000.0 + 5200000000.0 + 5879000000.0)
+    assert r.filed_date == D("2026-08-20")
 
 
 # ---------------------------------------------------------------------------

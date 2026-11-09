@@ -1,4 +1,4 @@
-# Data spec: quarterly NI to common, TTM flows and DPS_TTM (`ttm`, v0.1.0)
+# Data spec: quarterly NI to common, TTM flows and DPS_TTM (`ttm`, v0.1.1)
 
 Owner: SW (data spec, from proposal §0 / §8) · Tests: QA (`tests/unit/test_ttm_spec.py`) ·
 Code: `src/valuation/ttm.py`, `src/valuation/providers/sec_edgar.py`, `src/valuation/providers/yahoo.py`
@@ -47,8 +47,11 @@ value changes (`!=`). So a derived Q4 gets the 10-K's filing date, and a restate
 ## 2. Yahoo (`yahoo.parse_quarterly_ni(ticker, ts_payload) -> list[Fact]`)
 From the fundamentals-timeseries types `quarterlyNetIncomeCommonStockholders` (discrete quarters, Q4 included) and
 `annualNetIncomeCommonStockholders` (used only to find fiscal year ends). Unit = the point's `currencyCode`.
-`filed_date = quarter_end + 90 days` when the quarter end equals an annual `asOfDate` (annual filing deadline),
-else `+ 45 days`; `filed_estimated = True`; source `"yahoo"`. Points without `reportedValue.raw` are skipped.
+`estimate = quarter_end + 90 days` when the quarter end equals an annual `asOfDate` (annual filing deadline),
+else `+ 45 days`. If the payload carries a top-level `"_fetched": "YYYY-MM-DD"` (stamped by the provider when the response
+was downloaded; always after the quarter ends, since a response can't contain an unfinished quarter), `filed_date = min(estimate, _fetched)`: a value present in a response downloaded on day X was public
+by day X. Otherwise `filed_date = estimate`. `filed_estimated = True`; source `"yahoo"`. Points without
+`reportedValue.raw` are skipped. (v0.1.1; the balance sheet keeps the plain +45-day estimate for now.)
 
 ## 3. TTM selection (`ttm.ttm(quarters, as_of) -> TTMResult`)
 `quarters`: objects with `period_end`, `filed_date`, `value` (e.g. `Fact`s of one ticker, one item, one source).
@@ -115,3 +118,5 @@ value None, flags {NO_TTM}.
 
 ## Changelog
 - **0.1.0:** initial version (Phase 6, P6-3/P6-4).
+- **0.1.1:** Yahoo filed date capped at the download date (`_fetched`). Without it, a TSX quarter reported
+  within 45 days of its end was invisible on the day it was downloaded, which left 58 of 215 TSX names `NO_TTM`.

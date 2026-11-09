@@ -1,7 +1,7 @@
 # System architecture (SW)
 
-Status: as built on 2026-11-09 (book_value 0.2.0, Phase 6 data batch 1 + eligibility 0.1.0). Planned components are
-dashed.
+Status: as built on 2026-11-09 (book_value 0.2.0, Phase 6 data batch 1 + eligibility 0.1.0, Phase 7 Model A
+residual_income 0.1.0 + Model B peer_regression 0.1.0 book branch + report v2). Planned components are dashed.
 
 ## Data flow
 ```mermaid
@@ -16,7 +16,8 @@ flowchart LR
         BOC["Bank of Canada Valet<br/>USD/CAD + 10y yield"]
         XIC["iShares XIC holdings<br/>TSX Composite + GICS"]
         WIKI["Wikipedia<br/>S&P 500 + GICS + CIK"]
-        IR["Issuer supplementary packs<br/>RY / TD / BNS / MFC PDFs"]
+        IR["Issuer supplementary packs<br/>RY / TD / BNS / MFC PDFs<br/>BVPS + ROE lines"]
+        CSM[/"universe/insurer_csm.csv<br/>manual insurer CSM (MFC)"/]
         FRED["FRED DGS10<br/>US 10y yield"]
     end
 
@@ -38,13 +39,14 @@ flowchart LR
         REF[(reference_metrics)]
         FL[(fetch_log)]
         VAL[(valuations + runs)]
+        SG[(signals<br/>payload per ticker)]
     end
 
     subgraph MOD["Valuation (engine.py, models/)"]
         ENG["engine.build_inputs<br/>select_latest_filing (no look-ahead)<br/>FX, share-class conversion"]
         BV["book_value 0.2.0<br/>BVPS, P/B, peer median FV"]
-        RI["Model A residual income"]:::planned
-        PB["Model B peer regression"]:::planned
+        RI["Model A residual_income 0.1.0<br/>ROE fade to r = 10y + 5% ERP<br/>MoS, r ± 1pp"]
+        PB["Model B peer_regression 0.1.0<br/>Theil–Sen ln(P/B) ~ ROE per GICS sector<br/>(book branch; EV branch planned)"]
         CMP["Model C factor composite"]:::planned
         ELIG["eligibility 0.1.0<br/>config/liquidity.yaml"]
         TTM["ttm: TTM NI, DPS_TTM"]
@@ -54,12 +56,12 @@ flowchart LR
     subgraph OUT["Outputs (reports/&lt;date&gt;/)"]
         SCR["screen_book_value.csv / .parquet"]
         COV["coverage_book_value.csv<br/>+ eligible, elig_fail_reason"]
-        SIG["screen_signals.csv<br/>BUY / HOLD / SELL"]:::planned
+        SIG["screen_signals.csv / .parquet<br/>per-model BUY / HOLD / SELL / NO_SIGNAL / NOT_ELIGIBLE<br/>(no vote until Phase 10)"]
     end
 
     subgraph QA["QA (src/valuation/qa, tests/)"]
         XC["crosscheck vs Yahoo"]
-        IC["crosscheck --issuer<br/>vs issuer BVPS"]
+        IC["crosscheck --issuer<br/>vs issuer BVPS + ROE"]
         T["pytest: spec tests from AN docs<br/>parser fixtures, offline pipeline"]
     end
 
@@ -74,10 +76,18 @@ flowchart LR
     ENG --> BV --> VAL
     ENG --> ELIG --> VAL
     ENG --> TTM --> VAL
-    ELIG -.-> RI & PB & CMP
-    TTM -.-> RI & CMP
-    RI & PB & CMP -.-> SIG
+    ELIG --> RI & PB
+    ELIG -.-> CMP
+    TTM --> RI
+    TTM -.-> CMP
+    RT --> RI
+    CSM --> RI
+    ENG --> RI
+    RI -->|"b0, ROE_raw"| PB
+    RI & PB --> SG --> SIG
+    CMP -.-> SIG
     RI & PB & CMP -.-> BT
+    SG --> IC
     VAL --> SCR & COV
     VAL --> XC
     REF --> XC
@@ -117,6 +127,7 @@ sequenceDiagram
     CLI->>D: value --universe ... (engine + book_value)
     D-->>CLI: valuations, runs
     CLI->>CLI: eligibility filter, TTM NI, DPS, rf; write screen + coverage reports
+    CLI->>CLI: Model A per ticker, then Model B per sector (pooled TSX + US); write screen_signals
     CLI->>D: crosscheck / crosscheck --issuer (QA)
 ```
 
@@ -127,4 +138,5 @@ sequenceDiagram
 | Reproducible | Raw responses cached per day; each valuation row stores `inputs_json`, `model_version`, and the run's git SHA |
 | Idempotent | `INSERT OR REPLACE` upserts on natural keys; re-runs are a no-op |
 | Fast daily run | Batch prices, one 5-day chart call per ticker for volume, and a refresh policy (`fetch_log`): 251 s for 718 tickers (≤ 5 min target); first load ~45 min incl. the 2-year history backfill |
+| Signals are not advice | Every screen_signals file starts with the disclaimer line (Parquet: metadata `disclaimer`); per-model labels only, no vote before Phase 10 |
 | Spec ↔ code | AN spec → QA tests written from the spec → SW implementation → external cross-checks |

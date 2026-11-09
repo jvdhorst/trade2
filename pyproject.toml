@@ -9,6 +9,7 @@ dependencies = [
     "pandas>=2.2",
     "pyarrow>=17",
     "pypdf>=7.0.0",
+    "pyyaml>=6.0.3",
     "requests>=2.32",
     "yfinance>=0.2.50",
 ]

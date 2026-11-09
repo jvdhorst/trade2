@@ -7,7 +7,6 @@ to "<app name> <contact email>" for production use.
 from __future__ import annotations
 
 import os
-import time
 from collections import defaultdict
 from datetime import date
 
@@ -18,6 +17,24 @@ from .base import GOODWILL, INTANGIBLES, NCI, PREFERRED, SHARES, TOTAL_EQUITY, F
 SOURCE = "sec_edgar"
 FORMS = {"10-K", "10-Q", "10-K/A", "10-Q/A", "20-F", "40-F"}
 URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+FRAMES_URL = "https://data.sec.gov/api/xbrl/frames/us-gaap/{concept}/USD/{frame}.json"
+
+
+def recent_frames(as_of: date, n: int = 2) -> list[str]:
+    """Instant frames for the last n completed calendar quarters, newest first ('CY2026Q3I')."""
+    y, q = as_of.year, (as_of.month - 1) // 3  # q = last completed quarter (0 -> previous year Q4)
+    out = []
+    for _ in range(n):
+        if q == 0:
+            y, q = y - 1, 4
+        out.append(f"CY{y}Q{q}I")
+        q -= 1
+    return out
+
+
+def parse_frame_accessions(payload: dict) -> dict[str, str]:
+    """{10-digit CIK: accession} for every filer in a frames response."""
+    return {str(d["cik"]).zfill(10): d["accn"] for d in payload.get("data", [])}
 
 EQUITY_TOTAL = "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"
 EQUITY_PARENT = "StockholdersEquity"
@@ -48,6 +65,20 @@ def _first(at, concepts):
         if v is not None:
             return v
     return None
+
+
+def trim_companyfacts(payload: dict) -> dict:
+    """Keep only the concepts parse_companyfacts reads (raw values, unchanged)."""
+    facts = payload.get("facts", {})
+    gaap = facts.get("us-gaap", {})
+    dei = facts.get("dei", {})
+    return {
+        "cik": payload.get("cik"), "entityName": payload.get("entityName"),
+        "facts": {
+            "us-gaap": {c: gaap[c] for c in CONCEPTS if c in gaap},
+            "dei": {c: dei[c] for c in ("EntityCommonStockSharesOutstanding",) if c in dei},
+        },
+    }
 
 
 def parse_companyfacts(ticker: str, payload: dict) -> list[Fact]:
@@ -102,18 +133,45 @@ def parse_companyfacts(ticker: str, payload: dict) -> list[Fact]:
 
 
 class EdgarProvider:
-    def __init__(self, cache: RawCache, pause: float = 0.2):
+    def __init__(self, cache: RawCache, pause: float = 0.15):
+        from .yahoo import RateLimiter
+
         self.cache = cache
         self.pause = pause
+        self.limiter = RateLimiter(1 / pause if pause else 0)
         self.ua = os.environ.get("VALUATION_SEC_USER_AGENT", "trade2-valuation-screener research")
+
+    def _get(self, url: str) -> dict:
+        self.limiter.wait()
+        r = requests.get(url, headers={"User-Agent": self.ua}, timeout=60)
+        r.raise_for_status()
+        return r.json()
+
+    def latest_accessions(self, as_of: date) -> dict[str, str]:
+        """Latest accession per CIK, from the stockholders'-equity frames of recent quarters.
+
+        One call per quarter covers every US filer, so it's cheap to detect who filed something new.
+        """
+        latest: dict[str, str] = {}
+        for frame in reversed(recent_frames(as_of)):  # oldest first; newer overwrite
+            key = f"frame_{EQUITY_PARENT}_{frame}"
+            raw = self.cache.get(SOURCE, key)
+            if raw is None:
+                try:
+                    raw = self._get(FRAMES_URL.format(concept=EQUITY_PARENT, frame=frame))
+                except requests.HTTPError:  # frame not published yet
+                    continue
+                self.cache.put(SOURCE, key, raw)
+            latest.update(parse_frame_accessions(raw))
+        return latest
 
     def companyfacts(self, cik: str) -> dict:
         cik = str(cik).zfill(10)
         raw = self.cache.get(SOURCE, f"CIK{cik}")
         if raw is None:
-            time.sleep(self.pause)
-            r = requests.get(URL.format(cik=cik), headers={"User-Agent": self.ua}, timeout=30)
+            self.limiter.wait()
+            r = requests.get(URL.format(cik=cik), headers={"User-Agent": self.ua}, timeout=60)
             r.raise_for_status()
-            raw = r.json()
+            raw = trim_companyfacts(r.json())  # 3-9 MB -> only the concepts we parse
             self.cache.put(SOURCE, f"CIK{cik}", raw)
         return raw

@@ -7,6 +7,7 @@ import pytest
 
 from valuation.engine import run_book_value
 from valuation.ingest.pipeline import ingest
+from valuation.providers import yahoo as yahoo_mod
 from valuation.qa.crosscheck import crosscheck_book_value
 from valuation.report.screen import write_report
 from valuation.store.db import connect
@@ -17,12 +18,23 @@ AS_OF = date(2026, 11, 9)
 class FakeYahoo:
     def __init__(self, data):
         self.data = data
+        self.calls = {"info": 0, "fundamentals": 0, "closes": 0}
 
     def info(self, t):
+        self.calls["info"] += 1
         return self.data[t]["info"]
 
-    def balance_sheet(self, t):
-        return self.data[t]["bs"]
+    def fundamentals(self, t, ccy):
+        self.calls["fundamentals"] += 1
+        return yahoo_mod.parse_balance_sheet(t, self.data[t]["bs"], ccy)
+
+    def closes(self, tickers):
+        self.calls["closes"] += 1
+        bars = []
+        for t in tickers:  # "MISSING" tickers simulate symbols the batch omits
+            if not self.data[t].get("batch_missing"):
+                bars += yahoo_mod.parse_history(t, self.history(t))
+        return bars
 
     def history(self, t):
         return [{"Date": "2026-11-06", "Close": self.data[t]["price"]},
@@ -33,7 +45,14 @@ class FakeEdgar:
     def __init__(self, payloads):
         self.payloads = payloads
 
+        self.accessions: dict[str, str] = {}
+        self.fetched = 0
+
+    def latest_accessions(self, as_of):
+        return self.accessions
+
     def companyfacts(self, cik):
+        self.fetched += 1
         return self.payloads[cik]
 
 
@@ -146,3 +165,89 @@ def test_universe_filter_and_coverage(con):
     assert cov.loc["GHOST", "status"] == "skipped" and cov.loc["GHOST", "reason"] == "not ingested"
     assert cov.loc["USA", "source"] == "sec_edgar" and not cov.loc["USA", "filed_estimated"]
     assert cov.loc["CAN.TO", "filed_estimated"]
+
+
+# ---------------------------------------------------------------------------
+# Incremental refresh policy
+# ---------------------------------------------------------------------------
+
+def _two_ticker_setup(tmp_path):
+    universe = tmp_path / "u2.csv"
+    universe.write_text("ticker,exchange,cik,share_classes,share_conversion,gics_sector\n"
+                        "AAA.TO,TSX,,1,1,Energy\nUSB,NYSE,0000000002,1,1,Financials\n")
+    yahoo = FakeYahoo({
+        "AAA.TO": {"info": {"currency": "CAD", "financialCurrency": "CAD", "sector": "E"},
+                   "bs": _bs("2026-09-30", 100.0, 10.0), "price": 12.0},
+        "USB": {"info": {"currency": "USD", "financialCurrency": "USD", "sector": "F"},
+                "bs": _bs("2026-09-30", 50.0, 5.0), "price": 20.0, "batch_missing": True},
+    })
+    edgar = FakeEdgar({"0000000002": {"facts": {"us-gaap": {
+        "StockholdersEquity": {"units": {"USD": [
+            {"val": 60.0, "end": "2026-09-30", "accn": "A1", "filed": "2026-10-30",
+             "form": "10-Q"}]}},
+        "CommonStockSharesOutstanding": {"units": {"shares": [
+            {"val": 5.0, "end": "2026-09-30", "accn": "A1", "filed": "2026-10-30",
+             "form": "10-Q"}]}}}, "dei": {}}}})
+    edgar.accessions = {"0000000002": "A1"}
+    return universe, yahoo, edgar
+
+
+def _run(c, universe, yahoo, edgar, tmp_path, when, **kw):
+    return ingest(c, universe, AS_OF, cache_root=tmp_path / "raw", yahoo_provider=yahoo,
+                  edgar_provider=edgar, boc_provider=FakeBoc(), now=when, **kw)
+
+
+def test_second_run_only_fetches_prices(tmp_path):
+    from datetime import datetime
+
+    universe, yahoo, edgar = _two_ticker_setup(tmp_path)
+    c = connect(":memory:")
+    t0 = datetime(2026, 11, 9, 18, 0)
+    first = _run(c, universe, yahoo, edgar, tmp_path, t0)
+    assert first["errors"] == {}
+    assert first["stats"] == {"prices": 2, "profiles": 2, "yahoo_fundamentals": 2,
+                              "edgar_filings": 1}
+    # USB was missing from the batch -> per-ticker history fallback priced it
+    assert c.execute("SELECT count(*) FROM prices_daily WHERE ticker='USB'").fetchone()[0] > 0
+
+    second = _run(c, universe, yahoo, edgar, tmp_path, t0.replace(day=10))
+    assert second["stats"] == {"prices": 2, "profiles": 0, "yahoo_fundamentals": 0,
+                               "edgar_filings": 0}
+    assert yahoo.calls["info"] == 2 and yahoo.calls["fundamentals"] == 2 and edgar.fetched == 1
+
+    edgar.accessions = {"0000000002": "A2"}  # a new filing appears in the frames
+    third = _run(c, universe, yahoo, edgar, tmp_path, t0.replace(day=11))
+    assert third["stats"]["edgar_filings"] == 1 and edgar.fetched == 2
+
+    forced = _run(c, universe, yahoo, edgar, tmp_path, t0.replace(day=11),
+                  refresh_fundamentals=True)
+    assert forced["stats"]["yahoo_fundamentals"] == 2 and forced["stats"]["edgar_filings"] == 1
+
+
+def test_prices_only_skips_fundamentals_but_onboards_new_tickers(tmp_path):
+    from datetime import datetime
+
+    universe, yahoo, edgar = _two_ticker_setup(tmp_path)
+    c = connect(":memory:")
+    res = _run(c, universe, yahoo, edgar, tmp_path, datetime(2026, 11, 9), prices_only=True)
+    # New tickers still get a profile + fundamentals so they can be valued; EDGAR is skipped.
+    assert res["stats"]["profiles"] == 2 and res["stats"]["edgar_filings"] == 0
+    res2 = _run(c, universe, yahoo, edgar, tmp_path, datetime(2026, 12, 30), prices_only=True)
+    assert res2["stats"] == {"prices": 2, "profiles": 0, "yahoo_fundamentals": 0,
+                             "edgar_filings": 0}
+
+
+def test_fundamentals_due_policy():
+    from datetime import datetime
+
+    from valuation.ingest.pipeline import yahoo_fundamentals_due as due
+
+    now = datetime(2026, 11, 9, 18)
+    recent = datetime(2026, 11, 8, 18)
+    assert due(None, None, now)
+    assert due(recent, date(2026, 9, 30), now, force=True)
+    assert not due(recent, date(2026, 9, 30), now)  # fresh, no new quarter expected
+    assert due(datetime(2026, 11, 1), date(2026, 9, 30), now)  # older than 7 days
+    # Jun 30 quarter + 136 days = Nov 13: not yet due on Nov 9, due on Nov 14 (daily re-check)
+    assert not due(recent, date(2026, 6, 30), now)
+    assert due(datetime(2026, 11, 13, 9), date(2026, 6, 30), datetime(2026, 11, 14, 18))

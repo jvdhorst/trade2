@@ -10,13 +10,28 @@ It does no trading. Updates run about once a day. Every number traces back to a 
 ```bash
 uv sync
 uv run valuation init                                 # create data/valuation.duckdb
-uv run valuation ingest --universe universe/reference.csv   # prices, fundamentals, FX
+uv run valuation ingest --universe universe/reference.csv   # prices + whatever is due (see below)
 uv run valuation value                                # writes reports/<date>/screen_book_value.{csv,parquet}
 uv run valuation crosscheck                           # compare against Yahoo's published book value
 uv run valuation crosscheck --issuer                  # compare against issuer supplementary packs
 uv run valuation universe                             # rebuild TSX Composite + S&P 500 lists
 uv run pytest                                         # offline tests (network tests are deselected)
 ```
+### Refresh policy (incremental ingest)
+| Data | When it is fetched | How |
+|---|---|---|
+| Prices | every run | Yahoo spark batch API, 20 tickers per call; per-ticker history only for symbols the batch omits |
+| TSX fundamentals | new ticker, data older than 7 days, or a new quarter expected (period end + 136 days; re-checked daily) | Yahoo fundamentals-timeseries, only the fields the model uses |
+| US fundamentals | new ticker, or a new accession for the CIK in the EDGAR frames API (1 call per quarter covers every US filer) | EDGAR companyfacts, trimmed to the parsed concepts before caching |
+| Profiles | new ticker or older than 30 days | Yahoo quoteSummary, with a crumb-free fallback |
+
+```bash
+uv run valuation ingest --prices-only --universe universe/tsx_composite.csv   # fastest daily mode
+uv run valuation ingest --refresh-fundamentals ...                             # force a full refetch
+```
+Per-ticker fetches run on 4 threads (`--workers`), with a shared rate limit (Yahoo ≈4 req/s, SEC ≤10 req/s).
+Fetch history is in the `fetch_log` table.
+
 For SEC EDGAR in production, set `VALUATION_SEC_USER_AGENT="<app> <contact email>"`, as SEC's fair-access policy asks.
 
 ## Data sources

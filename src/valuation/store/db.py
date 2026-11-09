@@ -61,6 +61,11 @@ def connect(path: str | Path = DEFAULT_DB) -> duckdb.DuckDBPyConnection:
     return con
 
 
+SCHEMA.append("""CREATE TABLE IF NOT EXISTS fetch_log (
+        ticker VARCHAR, source VARCHAR, fetched_at TIMESTAMP, marker VARCHAR,
+        PRIMARY KEY (ticker, source)
+    )""")
+
 # Additive migrations for databases created by earlier versions.
 MIGRATIONS = [
     "ALTER TABLE securities ADD COLUMN IF NOT EXISTS gics_sector VARCHAR",

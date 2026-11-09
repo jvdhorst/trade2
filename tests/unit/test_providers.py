@@ -148,3 +148,67 @@ def test_yahoo_negative_preferred_rejected():
     bs = {"2026-06-30": {"Total Equity Gross Minority Interest": 100.0,
                          "Common Stock Equity": 120.0, "Ordinary Shares Number": 10.0}}
     assert PREFERRED not in _items(yahoo.parse_balance_sheet("X", bs, "USD"))
+
+
+def test_parse_spark_batch():
+    payload = {"RY.TO": {"timestamp": [1794234600, 1794321000], "close": [288.62, None],
+                         "symbol": "RY.TO"},
+               "TD.TO": {"timestamp": [1794234600], "close": [175.87]}}
+    bars = yahoo.parse_spark(payload)
+    assert [(b.ticker, b.date, b.close) for b in bars] == [
+        ("RY.TO", date(2026, 11, 9), 288.62), ("TD.TO", date(2026, 11, 9), 175.87)]
+
+
+def test_timeseries_matches_balance_sheet_parser():
+    ts = {"timeseries": {"result": [
+        {"meta": {"type": ["quarterlyTotalEquityGrossMinorityInterest"]},
+         "quarterlyTotalEquityGrossMinorityInterest": [
+             {"asOfDate": "2026-07-31", "currencyCode": "CAD", "reportedValue": {"raw": 145.0}}]},
+        {"meta": {"type": ["quarterlyCommonStockEquity"]},
+         "quarterlyCommonStockEquity": [
+             {"asOfDate": "2026-07-31", "currencyCode": "CAD", "reportedValue": {"raw": 133.0}}]},
+        {"meta": {"type": ["quarterlyMinorityInterest"]},
+         "quarterlyMinorityInterest": [
+             {"asOfDate": "2026-07-31", "currencyCode": "CAD", "reportedValue": {"raw": 0.5}}]},
+        {"meta": {"type": ["quarterlyOrdinarySharesNumber"]},
+         "quarterlyOrdinarySharesNumber": [
+             {"asOfDate": "2026-07-31", "currencyCode": "CAD", "reportedValue": {"raw": 1.4}}]},
+    ]}}
+    bs, ccy = yahoo.timeseries_to_bs(ts)
+    assert ccy == "CAD"
+    expected = {"Total Equity Gross Minority Interest": 145.0, "Common Stock Equity": 133.0,
+                "Minority Interest": 0.5, "Ordinary Shares Number": 1.4}
+    assert bs == {"2026-07-31": expected}
+    assert yahoo.parse_balance_sheet("RY.TO", bs, ccy) == yahoo.parse_balance_sheet(
+        "RY.TO", {"2026-07-31": expected}, "CAD")
+
+
+def test_recent_frames_and_accessions():
+    assert sec_edgar.recent_frames(date(2026, 11, 9)) == ["CY2026Q3I", "CY2026Q2I"]
+    assert sec_edgar.recent_frames(date(2027, 2, 1)) == ["CY2026Q4I", "CY2026Q3I"]
+    assert sec_edgar.recent_frames(date(2027, 1, 1), 3) == ["CY2026Q4I", "CY2026Q3I", "CY2026Q2I"]
+    payload = {"data": [{"cik": 320193, "accn": "X1"}, {"cik": 19617, "accn": "X2"}]}
+    assert sec_edgar.parse_frame_accessions(payload) == {"0000320193": "X1", "0000019617": "X2"}
+
+
+def test_rate_limiter_spacing():
+    import time
+
+    lim = yahoo.RateLimiter(rate=50)  # 20 ms spacing
+    t0 = time.monotonic()
+    for _ in range(6):
+        lim.wait()
+    assert time.monotonic() - t0 >= 0.09
+
+
+def test_trim_companyfacts_keeps_parsed_concepts_only():
+    payload = {"cik": 1, "entityName": "X", "facts": {
+        "us-gaap": {"StockholdersEquity": {"units": {"USD": [
+            _f(5, "2026-06-30", "A", "2026-08-01")]}},
+                    "Revenues": {"units": {"USD": []}}},
+        "dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [
+            _f(2, "2026-07-20", "A", "2026-08-01")]}}, "EntityPublicFloat": {}}}}
+    trimmed = sec_edgar.trim_companyfacts(payload)
+    assert set(trimmed["facts"]["us-gaap"]) == {"StockholdersEquity"}
+    assert set(trimmed["facts"]["dei"]) == {"EntityCommonStockSharesOutstanding"}
+    assert sec_edgar.parse_companyfacts("X", trimmed) == sec_edgar.parse_companyfacts("X", payload)

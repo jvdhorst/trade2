@@ -6,9 +6,11 @@ Yahoo gives no filing dates, so filed_date is estimated as period_end + 45 days
 
 from __future__ import annotations
 
+import hashlib
 import math
+import threading
 import time
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from .base import (
@@ -126,6 +128,65 @@ def parse_history(ticker: str, rows: list[dict]) -> list[PriceBar]:
     return out
 
 
+# Fundamentals-timeseries type -> the Yahoo line-item name parse_balance_sheet expects.
+TS_TYPES = {
+    "quarterlyTotalEquityGrossMinorityInterest": "Total Equity Gross Minority Interest",
+    "quarterlyStockholdersEquity": "Stockholders Equity",
+    "quarterlyCommonStockEquity": "Common Stock Equity",
+    "quarterlyMinorityInterest": "Minority Interest",
+    "quarterlyPreferredStockEquity": "Preferred Stock Equity",
+    "quarterlyGoodwill": "Goodwill",
+    "quarterlyOtherIntangibleAssets": "Other Intangible Assets",
+    "quarterlyOrdinarySharesNumber": "Ordinary Shares Number",
+}
+SPARK_MAX = 20  # Yahoo rejects more symbols per spark call
+
+
+def parse_spark(payload: dict) -> list[PriceBar]:
+    """Batch daily closes: {symbol: {timestamp: [...], close: [...]}}."""
+    out = []
+    for sym, d in (payload or {}).items():
+        if not isinstance(d, dict):
+            continue
+        for ts, c in zip(d.get("timestamp") or [], d.get("close") or [], strict=False):
+            if c is None:
+                continue
+            day = datetime.fromtimestamp(ts, tz=UTC).date()
+            out.append(PriceBar(sym, day, float(c), None, None, SOURCE))
+    return out
+
+
+def timeseries_to_bs(payload: dict) -> tuple[dict[str, dict[str, float]], str | None]:
+    """Fundamentals-timeseries response -> ({period: {line item: value}}, statement currency)."""
+    bs: dict[str, dict[str, float]] = {}
+    for res in payload.get("timeseries", {}).get("result", []) or []:
+        for key, vals in res.items():
+            item = TS_TYPES.get(key)
+            if item is None or not isinstance(vals, list):
+                continue
+            for v in vals:
+                if v and v.get("reportedValue", {}).get("raw") is not None:
+                    bs.setdefault(v["asOfDate"], {})[item] = float(v["reportedValue"]["raw"])
+    return bs, parse_statement_currency(payload)
+
+
+class RateLimiter:
+    """At most `rate` calls per second across threads."""
+
+    def __init__(self, rate: float):
+        self.interval = 1.0 / rate if rate > 0 else 0.0
+        self._lock = threading.Lock()
+        self._next = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            delay = self._next - now
+            self._next = max(now, self._next) + self.interval
+        if delay > 0:
+            time.sleep(delay)
+
+
 # ---------- fetch (network, cached) ----------
 
 class ProviderError(RuntimeError):
@@ -148,11 +209,15 @@ class YahooProvider:
     CHART_URL = "https://query2.finance.yahoo.com/v8/finance/chart/{t}?range=5d&interval=1d"
     TS_URL = ("https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/timeseries/"
               "{t}?type=quarterlyStockholdersEquity&period1={p1}&period2={p2}")
+    TS_ALL_URL = ("https://query2.finance.yahoo.com/ws/fundamentals-timeseries/v1/finance/"
+                  "timeseries/{t}?type={types}&period1={p1}&period2={p2}")
+    SPARK_URL = ("https://query2.finance.yahoo.com/v8/finance/spark?symbols={s}"
+                 "&range={r}&interval=1d")
 
-    def __init__(self, cache: RawCache, pause: float = 2.0, retries: int = 4,
-                 breaker: int = 2):
+    def __init__(self, cache: RawCache, rate: float = 4.0, retries: int = 4,
+                 breaker: int = 2, pause: float | None = None):
         self.cache = cache
-        self.pause = pause
+        self.limiter = RateLimiter(rate if pause is None else (1 / pause if pause else 0))
         self.retries = retries
         self.breaker = breaker  # consecutive profile failures before skipping the endpoint
         self._profile_failures = 0
@@ -160,7 +225,7 @@ class YahooProvider:
     def _ticker(self, ticker: str):
         import yfinance as yf
 
-        time.sleep(self.pause)
+        self.limiter.wait()
         return yf.Ticker(ticker)
 
     def info(self, ticker: str) -> dict:
@@ -200,10 +265,43 @@ class YahooProvider:
     def _get_json(self, url: str) -> dict:
         import requests
 
-        time.sleep(self.pause / 2)
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
-        r.raise_for_status()
-        return r.json()
+        for attempt in range(self.retries):
+            self.limiter.wait()
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+            if r.status_code == 429:  # throttled: back off and retry
+                time.sleep(5 * 2**attempt)
+                continue
+            r.raise_for_status()
+            return r.json()
+        raise ProviderError(f"throttled (429) after {self.retries} tries: {url[:80]}")
+
+    def closes(self, tickers: list[str], range_: str = "1mo") -> list[PriceBar]:
+        """Daily closes for many tickers, 20 per call (spark API, no crumb needed)."""
+        bars: list[PriceBar] = []
+        for i in range(0, len(tickers), SPARK_MAX):
+            chunk = tickers[i:i + SPARK_MAX]
+            key = "spark_" + hashlib.sha1(",".join(chunk + [range_]).encode()).hexdigest()[:12]
+            raw = self.cache.get(SOURCE, key)
+            if raw is None:
+                raw = self._get_json(self.SPARK_URL.format(s=",".join(chunk), r=range_))
+                if isinstance(raw, dict) and "spark" in raw:  # error envelope
+                    raise ProviderError(f"spark error: {str(raw)[:200]}")
+                self.cache.put(SOURCE, key, raw)
+            bars += parse_spark(raw)
+        return bars
+
+    def fundamentals(self, ticker: str, fallback_currency: str | None) -> list[Fact]:
+        """Quarterly balance-sheet facts via fundamentals-timeseries (only the fields we use)."""
+        raw = self.cache.get(SOURCE, f"{ticker}.timeseries")
+        if raw is None:
+            p2 = int(time.time())
+            raw = self._get_json(self.TS_ALL_URL.format(
+                t=ticker, types=",".join(TS_TYPES), p1=p2 - 2 * 365 * 86400, p2=p2))
+            self.cache.put(SOURCE, f"{ticker}.timeseries", raw)
+        bs, ccy = timeseries_to_bs(raw)
+        if not bs:
+            raise ProviderError(f"{ticker}: no fundamentals from timeseries")
+        return parse_balance_sheet(ticker, bs, ccy or fallback_currency or "")
 
     def _fallback_profile(self, ticker: str) -> dict:
         """Trading currency from the chart API, statement currency from the timeseries API.

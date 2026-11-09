@@ -17,6 +17,10 @@ def main(argv: list[str] | None = None) -> int:
     pi = sub.add_parser("ingest", help="fetch prices, fundamentals, FX")
     pi.add_argument("--universe", default="universe/reference.csv")
     pi.add_argument("--as-of", type=date.fromisoformat, default=date.today())
+    pi.add_argument("--prices-only", action="store_true", help="daily mode: batch prices + FX")
+    pi.add_argument("--refresh-fundamentals", action="store_true",
+                    help="refetch fundamentals for every ticker, ignoring the refresh policy")
+    pi.add_argument("--workers", type=int, default=4)
     pv = sub.add_parser("value", help="run book_value model and write report")
     pv.add_argument("--as-of", type=date.fromisoformat, default=date.today())
     pv.add_argument("--min-peers", type=int, default=5)
@@ -39,8 +43,13 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "ingest":
         from .ingest.pipeline import ingest
 
-        res = ingest(con, args.universe, args.as_of)
-        print(f"ingested {res['tickers']} tickers, {len(res['errors'])} errors")
+        res = ingest(con, args.universe, args.as_of, prices_only=args.prices_only,
+                     refresh_fundamentals=args.refresh_fundamentals, workers=args.workers)
+        st = res["stats"]
+        print(f"ingested {res['tickers']} tickers ({st['prices']} priced, "
+              f"{st['profiles']} profiles, "
+              f"{st['yahoo_fundamentals']} Yahoo + {st['edgar_filings']} EDGAR fundamentals "
+              f"refreshed), {len(res['errors'])} errors")
         for k, v in res["errors"].items():
             print(f"  {k}: {v}")
     elif args.cmd == "value":

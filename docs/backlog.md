@@ -22,6 +22,7 @@ Status: `todo` · `doing` · `done` · `blocked`
 | P1-7 | Coverage / data-quality report | QA/SW | Missing fields, stale prices, unit mismatches listed | done (`coverage_book_value.csv`) |
 | P1-8 | Full TSX Composite ingest run (215) | SW | ≥95% valued | done (100%) |
 | P1-9 | S&P 500 ingest run (503) | SW | ≥95% valued; run on request | todo |
+| P1-11 | Faster ingestion: batch prices, timeseries fundamentals, EDGAR frames, refresh policy, threads | SW/QA | Facts identical to the old route; daily run ≤2 min | done |
 | P1-10 | QA triage of Yahoo outliers (BIP/BEP units, POW, CLS, AAUC, MDA, GFL, DML, BAM) | QA | Each explained or fixed | todo |
 
 ## Phase 2: Book value vs price

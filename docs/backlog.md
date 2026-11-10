@@ -60,14 +60,23 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | P7-5 | Report v2 `screen_signals.{csv,parquet}` with disclaimer, `signals` table | SW | done |
 | P7-6 | Insurer CSM via manual `universe/insurer_csm.csv` | QA/human | MFC done; **SLF, GWO, IAG need human input** (NO_SIGNAL / NEEDS_CSM_INPUT) |
 | P7-7 | TSX sector label "Communication" (iShares) ≠ GICS "Communication Services": 5 names get NO_SECTOR | SW | todo |
-| P7-8 | PM decision: Model B BUY on loss-makers scored at the 5th-pct ROE (NEG_ROE_UNFITTED, 7 BUYs) | PM/AN | todo |
-| P7-9 | PM/backtest: Model A gives SELL on 309/718 (no terminal value, T = 10); review only after Phase 8, no tuning | PM | todo |
+| P7-8 | PM decision: Model B BUY on loss-makers scored at the 5th-pct ROE (NEG_ROE_UNFITTED, 7 BUYs) | PM/AN | backtest: inconclusive (89 obs, median −1.4%, hit 48%) |
+| P7-9 | PM/backtest: Model A gives SELL on 309/718 (no terminal value, T = 10); review only after Phase 8, no tuning | PM | backtest done: SELLs ≈ sector (hit 50.6%), P/B > 2.9 SELLs beat sector +2.1% → P8-7 |
 | P7-10 | Fill SLF/GWO/IAG CSM after tax each quarter (issuer SIPs) | human | todo |
-| P7-11 | One-off gains drive 5 of 8 Model A BUYs (ECHO, FIS, FCR-UN, APA, SMCI): rule for a dominant quarter (AN) | AN/PM | todo |
+| P7-11 | One-off gains drive 5 of 8 Model A BUYs (ECHO, FIS, FCR-UN, APA, SMCI): rule for a dominant quarter (AN) | AN/PM | backtest supports it: clipped BUYs hit 44% vs 58% → P8-7 |
 | P7-12 | SMCI: Yahoo tags US$4.23B preferred at 2026-06-30, EDGAR none; read the 10-Q | QA | todo |
 | P7-13 | 52/53-week filers: Yahoo vs EDGAR quarter ends 1–5 days apart give 22 false ROE_PERIOD_MISMATCH (spec change) | AN/SW | todo |
-| P7-14 | Model B Financials slope steepened by payments/ratings/brokers (MA, MCO, V, AMP, AON): ALL +466%; sub-industry peers? | AN/PM | todo |
-| P8-1..3 | Backtest harness (PIT S&P membership, engine, A/B results) | SW/QA | todo |
+| P7-14 | Model B Financials slope steepened by payments/ratings/brokers (MA, MCO, V, AMP, AON): ALL +466%; sub-industry peers? | AN/PM | backtest: hurts (Fin IC −0.078); sub-industry split never reaches 12 names; excluding payments/exchanges → IC ≈ 0 → P8-7 |
+| P8-0 | Spec `docs/models/backtest.md` (calendar, holdout lock, metrics, pass bar, goldens) | AN | done (v0.1.1 after QA review) |
+| P8-1 | PIT S&P 500 membership from Wikipedia (changes table moved to "Historical components of the S&P 500") | SW/QA | done (792 intervals, 503–508 members/date; real add/remove dates tested) |
+| P8-2 | Backtest DB + engine: as-traded prices 2012→, splits, EDGAR history, live run_signals per month-end, resumable; look-ahead tests | SW/QA | done (225 spec tests; 154 dates in ~9.5 min wall) |
+| P8-3 | Run + report: `docs/qa/backtest_model_a.md`, `backtest_model_b.md`, `phase8-validation.md` | QA | done: **A FAIL, B FAIL** (in-sample; holdout kept locked) |
+| P8-4 | Delisted-price source (e.g. Stooq, new host) to remove survivorship bias: 158/258 removed names lack prices (11% of member-dates) | PM/SW | todo |
+| P8-5 | Predecessor-CIK map for reorganised filers (XOM, BLK, DIS, AVGO, LIN) | SW | todo |
+| P8-6 | Share count for multi-class EDGAR filers (META, EL, MKC, STZ, LEN, HRL, TSN, …): spec a fallback (e.g. weighted-average basic shares) | AN/SW | todo |
+| P8-7 | PM decision on the backtest proposals (phase8-validation §6): Model A SELL rule, one-off ROE rule (P7-11), Model B Financials payments/exchanges (P7-14) | PM/AN | todo |
+| P8-8 | Live first load: bulk upserts instead of `executemany` (36 min for 503 names) | SW | todo |
+| P8-9 | Historical E3/E2 thresholds are nominal (US$5B cap fails ~10 names/date in 2014); consider indexed/relative thresholds for history | AN/PM | todo |
 | P9 | Data batch 2 + Model C composite | AN/QA/SW | todo |
 | P10 | Model B EV/Sales branch + vote | AN/QA/SW | todo |
 
@@ -97,6 +106,11 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
   are dropped. Its shortlist (H shareholder yield, J EBIT yield + ROC, G Altman Z'' veto) is for after Phase 10.
 - 2026-11-09: insurers without a sourced CSM (SLF, GWO, IAG) stay `NO_SIGNAL` / `NEEDS_CSM_INPUT` (user
   decision). No manual inputs will be added for now.
+
+- 2026-11-10: Phase 8. Backtest harness built (own DB `data/backtest.duckdb`). US in-sample 2014-01…2023-10:
+  Model A FAIL (12m IC 0.007, t 0.13, spread > 0 in 3/10 years), Model B FAIL (IC −0.054, t −0.86, 4/10). Both stay
+  "unvalidated"; vote stays off. Holdout (last 36 month-ends) kept locked for the first frozen-threshold re-test of a
+  revised model. Results are a survivor-biased upper bound (158/258 removed names lack prices). No parameter changed.
 
 ## Next up (PM selection)
 1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.

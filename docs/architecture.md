@@ -1,7 +1,8 @@
 # System architecture (SW)
 
 Status: as built on 2026-11-09 (book_value 0.2.0, Phase 6 data batch 1 + eligibility 0.1.0, Phase 7 Model A
-residual_income 0.1.0 + Model B peer_regression 0.1.0 book branch + report v2). Planned components are dashed.
+residual_income 0.1.0 + Model B peer_regression 0.1.0 book branch + report v2, Phase 8 backtest 0.1.0). Planned
+components are dashed.
 
 ## Data flow
 ```mermaid
@@ -50,7 +51,15 @@ flowchart LR
         CMP["Model C factor composite"]:::planned
         ELIG["eligibility 0.1.0<br/>config/liquidity.yaml"]
         TTM["ttm: TTM NI, DPS_TTM"]
-        BT["backtest harness"]:::planned
+    end
+
+    subgraph BTS["Backtest (src/valuation/backtest, spec backtest.md)"]
+        WH["Wikipedia: Historical components<br/>of the S&P 500 (changes table)"]
+        MEM["membership: PIT S&P 500 intervals<br/>(backward walk from today's list)"]
+        BDB[("data/backtest.duckdb<br/>as-traded prices 2012→ + splits<br/>EDGAR history, index_membership")]
+        BT["engine: month-end 2014→<br/>live run_signals per date (≤ d only)<br/>4 worker processes, resumable"]
+        MET["metrics: fwd 3/6/12m returns, sector-neutral spread,<br/>hit rates, rank IC + Newey–West t, turnover,<br/>pass bar, low-P/B baseline; holdout locked"]
+        BTR["reports/backtest/*.md<br/>docs/qa/backtest_model_a/b.md"]
     end
 
     subgraph OUT["Outputs (reports/&lt;date&gt;/)"]
@@ -86,7 +95,13 @@ flowchart LR
     RI -->|"b0, ROE_raw"| PB
     RI & PB --> SG --> SIG
     CMP -.-> SIG
-    RI & PB & CMP -.-> BT
+    WH --> MEM --> BDB
+    YC -->|"period1/period2, daily"| BDB
+    EC -->|"full history"| BDB
+    BDB --> BT
+    RI & PB --> BT
+    CMP -.-> BT
+    BT --> MET --> BTR
     SG --> IC
     VAL --> SCR & COV
     VAL --> XC
@@ -139,4 +154,5 @@ sequenceDiagram
 | Idempotent | `INSERT OR REPLACE` upserts on natural keys; re-runs are a no-op |
 | Fast daily run | Batch prices, one 5-day chart call per ticker for volume, and a refresh policy (`fetch_log`): 251 s for 718 tickers (≤ 5 min target); first load ~45 min incl. the 2-year history backfill |
 | Signals are not advice | Every screen_signals file starts with the disclaimer line (Parquet: metadata `disclaimer`); per-model labels only, no vote before Phase 10 |
+| Backtest point in time | Own DB; prices stored as traded (Yahoo split adjustment undone) so price × shares-as-filed is a real market cap; shares × splits in (filed, d], dividends ÷ splits in (ex, d]; facts `filed_date ≤ d` (+30 days for estimated Yahoo dates); membership on d from the Wikipedia changes table; holdout (last 36 month-ends) computed only with `--holdout`, logged in `bt_runs` with a thresholds hash |
 | Spec ↔ code | AN spec → QA tests written from the spec → SW implementation → external cross-checks |

@@ -77,6 +77,7 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | P8-7 | PM decision on the backtest proposals (phase8-validation §6): Model A SELL rule, one-off ROE rule (P7-11), Model B Financials payments/exchanges (P7-14) | PM/AN | todo |
 | P8-8 | Live first load: bulk upserts instead of `executemany` (36 min for 503 names) | SW | todo |
 | P8-9 | Historical E3/E2 thresholds are nominal (US$5B cap fails ~10 names/date in 2014); consider indexed/relative thresholds for history | AN/PM | todo |
+| P8-10 | Benchmark yields and returns (S&P 500 TR, SPY/IVV/VOO, S&P/TSX, XIC/XIU/ZCN): spec `docs/models/benchmarks.md`; report block + backtest excess-return column | QA/SW | todo |
 | P9 | Data batch 2 + Model C composite | AN/QA/SW | todo |
 | P10 | Model B EV/Sales branch + vote | AN/QA/SW | todo |
 

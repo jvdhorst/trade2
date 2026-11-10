@@ -1,0 +1,10 @@
+key,symbol,market,role,note
+SPX_TR,^SP500TR,US,primary_return,S&P 500 total-return index
+SPX,^GSPC,US,reference,S&P 500 price index
+SPY,SPY,US,primary_yield,SPDR S&P 500 ETF
+IVV,IVV,US,cross_check,iShares Core S&P 500 ETF
+VOO,VOO,US,cross_check,Vanguard S&P 500 ETF
+TSX,^GSPTSE,TSX,reference,S&P/TSX Composite price index (no free total-return index)
+XIC,XIC.TO,TSX,primary_return_and_yield,iShares Core S&P/TSX Capped Composite ETF (tracks the TSX universe)
+XIU,XIU.TO,TSX,cross_check,iShares S&P/TSX 60 ETF
+ZCN,ZCN.TO,TSX,cross_check,BMO S&P/TSX Capped Composite ETF

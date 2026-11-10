@@ -27,6 +27,19 @@ def backtest_cmd(args) -> int:
         print(json.dumps(stats, indent=1, default=str))
         return 0
 
+    if args.action == "benchmarks":  # benchmark series for the excess-return column (P8-10)
+        from datetime import date
+
+        from ..benchmarks import ingest_benchmarks
+        from ..providers.yahoo import YahooProvider
+
+        con = runner.connect_bt(bt_path)
+        errs = ingest_benchmarks(con, YahooProvider(RawCache()), date(2012, 6, 1), args.today)
+        n = con.execute("SELECT key, count(*), min(date), max(date) FROM benchmarks_daily "
+                        "GROUP BY 1 ORDER BY 1").fetchall()
+        print("\n".join(f"{k}: {c} bars {a} .. {b}" for k, c, a, b in n), errs or "")
+        return 0
+
     con = runner.connect_bt(bt_path)
     dates = bte.rebalance_dates(bte.BT_START, args.today)
     if args.action == "run":
@@ -84,6 +97,17 @@ def backtest_cmd(args) -> int:
              + (f"{ho[0]} .. {ho[-1]} ({len(ho)})" if ho else "locked (not computed)"), ""]
     for model, name in rep.MODELS.items():
         parts += [rep.render_model(results[model], name), ""]
+    from ..benchmarks import primary_return_benchmark
+
+    bkey = primary_return_benchmark(args.universe)
+    bench = rep.benchmark_fwd(con, bkey, dates)
+    bex = rep.benchmark_excess_tables(results, bench, ins)
+    parts += ["## Excess return vs benchmark (in-sample)", "",
+              rep.render_benchmark_excess(bex, bkey), ""]
+    if ho:
+        parts += ["## Excess return vs benchmark (holdout)", "",
+                  rep.render_benchmark_excess(rep.benchmark_excess_tables(results, bench, ho),
+                                              bkey), ""]
     parts += ["## Phase 7 diagnostics (in-sample)", "", rep.render_diag(diag), "",
               "## Survivorship", "", "```", json.dumps(sv, indent=1, default=str), "```"]
     path = out / f"backtest_{args.universe}_{run_id}.md"

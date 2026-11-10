@@ -202,10 +202,11 @@ def test_rate_limiter_spacing():
 
 
 def test_trim_companyfacts_keeps_parsed_concepts_only():
+    # "Revenues" was the unparsed example until data batch 2 (ttm.md 0.2.0) parsed it.
     payload = {"cik": 1, "entityName": "X", "facts": {
         "us-gaap": {"StockholdersEquity": {"units": {"USD": [
             _f(5, "2026-06-30", "A", "2026-08-01")]}},
-                    "Revenues": {"units": {"USD": []}}},
+                    "EntityPublicFloatUsGaap": {"units": {"USD": []}}},
         "dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [
             _f(2, "2026-07-20", "A", "2026-08-01")]}}, "EntityPublicFloat": {}}}}
     trimmed = sec_edgar.trim_companyfacts(payload)

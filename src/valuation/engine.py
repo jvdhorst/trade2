@@ -130,9 +130,16 @@ def ni_common_ttm(con, ticker: str, as_of: date):
     """TTM NI to common: per source, then the latest quarter end wins (EDGAR on ties).
 
     Returns (TTMResult, source, currency)."""
+    return flow_ttm(con, ticker, NI_COMMON_Q, as_of)
+
+
+def flow_ttm(con, ticker: str, item: str, as_of: date):
+    """TTM of any flow item (spec ttm.md §5.3): per source, latest period_end wins, EDGAR on ties.
+
+    Returns (TTMResult, source, currency)."""
     rows = con.execute(
         "SELECT source, period_end, filed_date, value, unit FROM fundamentals "
-        "WHERE ticker=? AND item=? AND filed_date<=?", [ticker, NI_COMMON_Q, as_of]).fetchall()
+        "WHERE ticker=? AND item=? AND filed_date<=?", [ticker, item, as_of]).fetchall()
     best: tuple[ttm_mod.TTMResult, str | None, str | None] = (
         ttm_mod.TTMResult(None, flags=frozenset({ttm_mod.NO_TTM})), None, None)
     for src in SOURCE_PRIORITY:
@@ -182,7 +189,8 @@ SESSION_QUORUM = 0.5  # a market session = a date on which >= half the market's 
 
 
 def run_eligibility(con, as_of: date, tickers: set[str] | None, market_caps: dict[str, float],
-                    config: dict) -> dict[str, elig.EligibilityResult]:
+                    config: dict, bars_out: dict | None = None
+                    ) -> dict[str, elig.EligibilityResult]:
     """Evaluate the filter for every security (valued or not). Universe file = index membership."""
     secs = con.execute("SELECT ticker, currency FROM securities").fetchall()
     markets = {t: market_of(t, c) for t, c in secs if tickers is None or t in tickers}
@@ -194,6 +202,8 @@ def run_eligibility(con, as_of: date, tickers: set[str] | None, market_caps: dic
             [as_of, as_of, lookback]).fetchall():
         if t in bars:
             bars[t].append(elig.Bar(d, c, a, v))
+    if bars_out is not None:  # reused by Model C (momentum, volatility)
+        bars_out.update(bars)
     sessions: dict[str, list[date]] = {}
     for m in ("TSX", "US"):
         names = [t for t, mk in markets.items() if mk == m]
@@ -320,8 +330,11 @@ SIGNAL_COLUMNS = [
     "ticker", "market", "sector", "eligible", "elig_fail_reason", "price", "bvps", "pb", "roe0",
     "a_signal", "a_no_signal_reason", "a_mos", "a_v_ri", "a_mos_up", "a_mos_down",
     "a_justified_pb", "b_signal", "b_no_signal_reason", "b_implied_upside", "b_resid_pct",
-    "b_fitted_pb", "b_fair_value", "flags",
+    "b_fitted_pb", "b_fair_value", "c_signal", "c_no_signal_reason", "c_score", "c_pct",
+    "c_n_factors", "c_value", "c_quality", "c_momentum", "c_risk", "flags",
 ]
+C_COLUMNS = ("c_signal", "c_no_signal_reason", "c_score", "c_pct", "c_n_factors", "c_value",
+             "c_quality", "c_momentum", "c_risk")
 LABELS = ("BUY", "HOLD", "SELL", "NO_SIGNAL", "NOT_ELIGIBLE")
 RF_SERIES = {"TSX": "CA10Y", "US": "US10Y"}
 
@@ -426,6 +439,7 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
                 liquidity: dict | None = None,
                 csm_path="universe/insurer_csm.csv") -> tuple[pd.DataFrame, dict]:
     """Model A + Model B for every security (or `tickers`), one report row each."""
+    from .models import composite as cm
     from .models import peer_regression as pr
     from .models import residual_income as ri
 
@@ -436,7 +450,8 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
         "SELECT ticker, currency, coalesce(gics_sector, sector) FROM securities").fetchall()}
     universe = sorted(set(tickers) if tickers is not None else set(secs))
     caps = {i.ticker: i.price * i.shares_outstanding for i, _ in inputs}
-    eligibility = run_eligibility(con, as_of, tickers, caps, liquidity)
+    bars: dict[str, list] = {}
+    eligibility = run_eligibility(con, as_of, tickers, caps, liquidity, bars_out=bars)
 
     a_results: dict[str, ri.RIResult] = {}
     details: dict[str, dict] = {}
@@ -486,7 +501,7 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
             "bs_source": meta["source"], "bs_period_end": inp.period_end.isoformat(),
             "bs_filed_date": inp.filed_date.isoformat(), "ttm_source": src,
             "ttm_period_end": q0.isoformat() if q0 else None,
-            "ni_common_ttm": res.value, "ce_end": ce_end, "ce_start": ce_start,
+            "ni_common_ttm": res.value, "ni_ccy": ni_ccy, "ce_end": ce_end, "ce_start": ce_start,
             "dps_ttm": dps, "roe_history": list(hist), "csm_after_tax": csm,
         }
 
@@ -496,11 +511,16 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
            for t, a in a_results.items()]
     b_list, fits = pr.run_peer_regression(obs)
     b_results = {b.ticker: b for b in b_list}
+    c_results, c_stats, c_extra = _run_model_c(con, as_of, universe, secs, inputs, a_results,
+                                               details, eligibility, bars)
 
     run_id = uuid.uuid4().hex[:12]
     con.execute("INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?)", [
         run_id, datetime.now(), as_of, "signals", _git_sha(),
-        json.dumps({"models": [ri.MODEL_VERSION, pr.MODEL_VERSION],
+        json.dumps({"models": [ri.MODEL_VERSION, pr.MODEL_VERSION, cm.MODEL_VERSION],
+                    "composite_stats": {"bounds": c_stats.bounds,
+                                        "sectors": {f"{k[0]}|{k[1]}": v.__dict__
+                                                    for k, v in c_stats.sectors.items()}},
                     "liquidity": liquidity, "csm_path": str(csm_path),
                     "skipped": skipped,
                     "fits": {s: f.__dict__ for s, f in fits.items()}}, default=str), "ok"])
@@ -530,9 +550,20 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
                    "b_no_signal_reason": b.no_signal_reason,
                    "b_implied_upside": b.implied_upside, "b_resid_pct": b.resid_pct,
                    "b_fitted_pb": b.fitted_pb, "b_fair_value": b.fair_value}
+        c = c_results.get(t)
+        if c is not None:
+            flags |= set(c.flags)
+            rec.update({"c_signal": c.signal, "c_no_signal_reason": c.no_signal_reason,
+                        "c_score": c.score, "c_pct": c.pct, "c_n_factors": c.n_factors,
+                        "c_value": c.value, "c_quality": c.quality, "c_momentum": c.momentum,
+                        "c_risk": c.risk})
         rec["flags"] = ",".join(sorted(flags))
         records.append(rec)
         payload = {**rec, **details.get(t, {})}
+        if c is not None:
+            payload.update({"c_metrics": c.metrics, "c_winsorized": c.winsorized, "c_z": c.z,
+                            "c_mom_pct": c.mom_pct, "c_factor_pct": c.factor_pct,
+                            "c_factor_labels": c.factor_labels, **c_extra.get(t, {})})
         if a is not None:
             payload.update({"roe_raw": a.roe_raw, "roe_basis": a.roe_basis, "r": a.r, "b": a.b,
                             "eps_ttm": a.eps_ttm, "v_ri_up": a.v_ri_up,
@@ -543,11 +574,69 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
                      rec["a_signal"], rec["b_signal"], json.dumps(payload, default=str)])
     df = pd.DataFrame.from_records(records, columns=SIGNAL_COLUMNS)
     counts: dict[str, dict[str, dict[str, int]]] = {}
-    for model, col in (("A", "a_signal"), ("B", "b_signal")):
+    for model, col in (("A", "a_signal"), ("B", "b_signal"), ("C", "c_signal")):
         counts[model] = {}
         for m in ("TSX", "US"):
             sub = df[df["market"] == m]
             if len(sub):
                 counts[model][m] = {lab: int((sub[col] == lab).sum()) for lab in LABELS}
     return df, {"run_id": run_id, "fits": fits, "counts": counts, "skipped": skipped,
-                "eligibility": eligibility}
+                "eligibility": eligibility, "composite_stats": c_stats}
+
+
+def _flow(con, ticker: str, item: str, as_of: date, rep_ccy: str | None, flags: set[str]):
+    """(TTM value, period_end) of a flow item, (None, None) on NO_TTM or a currency that is not
+    the balance sheet's (flag FLOW_CCY_MISMATCH). Spec composite.md, Data mapping."""
+    res, _src, ccy = flow_ttm(con, ticker, item, as_of)
+    if res.value is None:
+        return None, None
+    if ccy and rep_ccy and ccy != rep_ccy:
+        flags.add("FLOW_CCY_MISMATCH")
+        return None, None
+    return res.value, res.period_end
+
+
+def _run_model_c(con, as_of, universe, secs, inputs, a_results, details, eligibility, bars):
+    """Model C (spec docs/models/composite.md, Data mapping): one CompositeInputs per universe
+    ticker, all names of the date pooled (TSX + US)."""
+    from .models import composite as cm
+    from .providers.base import CAPEX_Q, CFO_Q, GROSS_PROFIT_Q
+
+    by_ticker = {i.ticker: (i, m) for i, m in inputs}
+    c_inputs, extra = [], {}
+    for t in universe:
+        e = eligibility.get(t)
+        closes = [b.adj_close for b in bars.get(t, []) if b.adj_close is not None
+                  and b.date <= as_of]
+        closes = [x for x in closes if x > 0]
+        mom, vol = cm.momentum(closes), cm.volatility(closes)
+        extra[t] = {"c_mom": mom, "c_vol": vol}
+        common = {"ticker": t, "sector": secs.get(t, (None, None))[1],
+                  "eligible": None if e is None else e.eligible,
+                  "history_ok": None if e is None else e.model_c_history_ok,
+                  "mom": mom, "vol": vol}
+        if t not in by_ticker or t not in a_results:
+            c_inputs.append(cm.CompositeInputs(**common))
+            continue
+        inp, meta = by_ticker[t]
+        a = a_results[t]
+        common["sector"] = a.sector
+        rep = inp.reporting_currency
+        flags: set[str] = set(a.flags) & {"NO_TTM", "STALE_TTM", "PIT_ESTIMATED"}
+        ni_ccy = details[t].get("ni_ccy")
+        ni = details[t]["ni_common_ttm"]
+        if ni is not None and ni_ccy and rep and ni_ccy != rep:
+            ni = None  # Model A's CCY_MISMATCH
+        ni_pe = details[t]["ttm_period_end"]
+        cfo, cfo_pe = _flow(con, t, CFO_Q, as_of, rep, flags)
+        capex, capex_pe = _flow(con, t, CAPEX_Q, as_of, rep, flags)
+        gp, _ = _flow(con, t, GROSS_PROFIT_Q, as_of, rep, flags)
+        c_inputs.append(cm.CompositeInputs(
+            **common, price=inp.price, market_cap=inp.price * inp.shares_outstanding,
+            fx_rate=inp.fx_rate, bvps=a.b0, ni_ttm=ni,
+            ni_period_end=date.fromisoformat(ni_pe) if ni_pe else None, roe=a.roe_raw,
+            cfo_ttm=cfo, cfo_period_end=cfo_pe, capex_ttm=capex, capex_period_end=capex_pe,
+            gross_profit_ttm=gp, total_assets=meta.get("total_assets"),
+            total_debt=meta.get("total_debt"), flags=frozenset(flags)))
+    results, stats = cm.run_composite(c_inputs)
+    return {r.ticker: r for r in results}, stats, extra

@@ -19,9 +19,20 @@ PREFERRED = "preferred_equity"
 GOODWILL = "goodwill"
 INTANGIBLES = "intangibles"
 SHARES = "shares_outstanding"
-ITEMS = (TOTAL_EQUITY, NCI, PREFERRED, GOODWILL, INTANGIBLES, SHARES)
-# Flow items: one discrete fiscal quarter each (spec docs/models/ttm.md).
+# Data batch 2 balance-sheet items (spec docs/models/ttm.md §5.2); absent, never 0, when untagged.
+TOTAL_ASSETS = "total_assets"
+TOTAL_DEBT = "total_debt"
+CASH = "cash"
+ITEMS = (TOTAL_EQUITY, NCI, PREFERRED, GOODWILL, INTANGIBLES, SHARES, TOTAL_ASSETS, TOTAL_DEBT,
+         CASH)
+# Flow items: one discrete fiscal quarter each (spec docs/models/ttm.md §1, §5.1).
 NI_COMMON_Q = "ni_common_q"
+CFO_Q = "cfo_q"
+CAPEX_Q = "capex_q"  # positive outflow
+REVENUE_Q = "revenue_q"
+GROSS_PROFIT_Q = "gross_profit_q"
+EBIT_Q = "ebit_q"
+FLOW_ITEMS = (NI_COMMON_Q, CFO_Q, CAPEX_Q, REVENUE_Q, GROSS_PROFIT_Q, EBIT_Q)
 
 
 @dataclass(frozen=True)

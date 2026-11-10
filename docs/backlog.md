@@ -75,11 +75,20 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | P8-5 | Predecessor-CIK map for reorganised filers (XOM, BLK, DIS, AVGO, LIN) | SW | todo |
 | P8-6 | Share count for multi-class EDGAR filers (META, EL, MKC, STZ, LEN, HRL, TSN, …): spec a fallback (e.g. weighted-average basic shares) | AN/SW | todo |
 | P8-7 | PM decision on the backtest proposals (phase8-validation §6): Model A SELL rule, one-off ROE rule (P7-11), Model B Financials payments/exchanges (P7-14) | PM/AN | todo |
-| P8-8 | Live first load: bulk upserts instead of `executemany` (36 min for 503 names) | SW | todo |
+| P8-8 | Live first load: bulk upserts instead of `executemany` (36 min for 503 names) | SW | done (P9: S&P 500 first load 502 s incl. 2y history; TSX 200 s) |
 | P8-9 | Historical E3/E2 thresholds are nominal (US$5B cap fails ~10 names/date in 2014); consider indexed/relative thresholds for history | AN/PM | todo |
-| P8-10 | Benchmark yields and returns (S&P 500 TR, SPY/IVV/VOO, S&P/TSX, XIC/XIU/ZCN): spec `docs/models/benchmarks.md`; report block + backtest excess-return column | QA/SW | todo |
-| P9 | Data batch 2 + Model C composite | AN/QA/SW | todo |
-| P10 | Model B EV/Sales branch + vote | AN/QA/SW | todo |
+| P8-10 | Benchmark yields and returns (S&P 500 TR, SPY/IVV/VOO, S&P/TSX, XIC/XIU/ZCN): spec `docs/models/benchmarks.md`; report block + backtest excess-return column | QA/SW | done (P9-5) |
+| P9-1 | Data batch 2: CFO, capex, revenue, GP, EBIT quarters + TTM; assets, debt (D1–D5), cash; spec `ttm.md` 0.2.0 | SW/QA | done (AAPL/JPM TTM exact vs 10-K/10-Q; CNR/SU exact vs Yahoo trailing) |
+| P9-2 | Spec `docs/models/composite.md` (Model C) | AN | done (v0.1.0, D1–D12) |
+| P9-3 | Model C tests from spec, `models/composite.py`, run_signals + screen_signals `c_*` | QA/SW | done (90 spec tests) |
+| P9-4 | Backtest Model C + per-factor spread/IC, `docs/qa/backtest_model_c.md` | QA | done: **C FAIL** (IC 0.008, t 0.28; 6/10 years) |
+| P9-5 | Benchmarks: ingest, `benchmarks_daily`, report block + `benchmarks.csv`, backtest excess vs SPX_TR / XIC | QA/SW | done (XIC/XIU exact vs BlackRock; SSGA/Vanguard/ishares.com unreachable) |
+| P9-6 | PM decision: eligibility `min_history_sessions` 273 → 274 so MOM (t−273) is always defined for E6-passing names (composite D5) | PM | todo |
+| P9-7 | Source choice prefers Yahoo for 52/53-week EDGAR filers (Yahoo labels the quarter at month-end, e.g. AAPL 09-30 vs 09-26), so flows/NI use an estimated filed date; related to P7-13 | AN/SW | todo |
+| P9-8 | E/P vs Yahoo `trailingPE` and SPY/IVV/VOO issuer distribution checks blocked (quoteSummary crumb 401; ssga.com, vanguard.com, ishares.com not reachable) | QA/PM | blocked |
+| P9-9 | Model C pools TSX + US quintiles: TSX gets 29% BUY vs US 16% on 2026-11-10 (anomaly, not tuned) | PM/AN | todo |
+| P9-10 | EDGAR `total_debt` absent for ~60 US non-financials (no D1–D5 tag); `−leverage` missing there | AN/SW | todo |
+| P10 | Model B EV/Sales branch + vote | AN/QA/SW | blocked (gate: ≥ 2 models pass; 0 of 3 do) |
 
 ## Decisions log
 - 2026-11-09: initial testing uses a ~2% subset of the universe (14 tickers, `universe/reference.csv`).
@@ -112,6 +121,11 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
   Model A FAIL (12m IC 0.007, t 0.13, spread > 0 in 3/10 years), Model B FAIL (IC −0.054, t −0.86, 4/10). Both stay
   "unvalidated"; vote stays off. Holdout (last 36 month-ends) kept locked for the first frozen-threshold re-test of a
   revised model. Results are a survivor-biased upper bound (158/258 removed names lack prices). No parameter changed.
+
+- 2026-11-10: Phase 9. Data batch 2 (ttm 0.2.0), Model C composite 0.1.0, benchmarks. US in-sample: Model C FAIL
+  (12m IC 0.0081, t 0.28; spread > 0 in 6/10 years, mean −1.89%); factor ICs V −0.056, Q 0.022, M 0.001, R 0.038.
+  BUY 12m excess vs SPX_TR: A −3.1%, B −1.1%, C −1.9% (equal-weighted universe −1.0%). Holdout still locked; no
+  parameter changed. Vote stays off (0 of 3 pass).
 
 ## Next up (PM selection)
 1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.

@@ -243,3 +243,49 @@ def low_pb_baseline(panel_pb: pd.DataFrame, min_sector: int = BASELINE_MIN) -> p
     x["score"] = np.where(x["pct"].notna(), -np.log(x["pb"].where(x["pct"].notna(), 1.0)),
                           math.nan)
     return x[["date", "ticker", "sector", "pb", "pct", "label", "score"]].reset_index(drop=True)
+
+
+# ---------- benchmark excess (spec docs/models/benchmarks.md, API contract; P8-10) ----------
+
+EXCESS_BUCKETS = ("BUY", "SELL", "ALL")
+
+
+def benchmark_excess(obs: pd.DataFrame, bench_fwd: pd.DataFrame,
+                     allowed_dates=None) -> pd.DataFrame:
+    """Per (allowed date, horizon, bucket): equal-weighted mean forward return of the bucket's
+    names (non-NaN ret) minus the benchmark's forward return over the same window.
+    obs: date, ticker, horizon, label, ret (caller passes eligible names only);
+    bench_fwd: date, horizon, ret. ALL = every obs row with a non-NaN ret."""
+    cols = ["date", "horizon", "bucket", "n", "bucket_ret", "bench_ret", "excess"]
+    o = obs[obs["ret"].notna()]
+    dates = sorted(set(obs["date"]) if allowed_dates is None else set(allowed_dates))
+    horizons = sorted(set(obs["horizon"]) | set(bench_fwd["horizon"]))
+    bench = {(d, h): r for d, h, r in bench_fwd[["date", "horizon", "ret"]].itertuples(index=False)}
+    grp = {k: g["ret"].to_numpy() for k, g in o.groupby(["date", "horizon"])}
+    lab = {k: g for k, g in o.groupby(["date", "horizon"])}
+    rows = []
+    for d in dates:
+        for h in horizons:
+            br = bench.get((d, h), np.nan)
+            br = np.nan if br is None else float(br)
+            for b in EXCESS_BUCKETS:
+                if (d, h) not in grp:
+                    vals = np.array([])
+                elif b == "ALL":
+                    vals = grp[(d, h)]
+                else:
+                    g = lab[(d, h)]
+                    vals = g.loc[g["label"] == b, "ret"].to_numpy()
+                n = len(vals)
+                mean = float(vals.mean()) if n else np.nan
+                ex = mean - br if n and not np.isnan(br) else np.nan
+                rows.append([d, h, b, n, mean, br, ex])
+    return pd.DataFrame(rows, columns=cols)
+
+
+def yearly_benchmark_excess(by_date: pd.DataFrame) -> pd.DataFrame:
+    x = by_date[by_date["excess"].notna()].copy()
+    x["year"] = [d.year for d in x["date"]]
+    out = (x.groupby(["year", "horizon", "bucket"])["excess"].agg(["size", "mean"])
+           .reset_index().rename(columns={"size": "n_dates", "mean": "excess"}))
+    return out[["year", "horizon", "bucket", "n_dates", "excess"]]

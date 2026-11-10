@@ -22,33 +22,55 @@ def load_universe(path: str | Path) -> list[dict]:
         return [r for r in csv.DictReader(fh) if r.get("ticker")]
 
 
+def _frame(rows: list, cols: list[str], key: list[str]):
+    """Rows -> DataFrame for a bulk insert (P8-8: DuckDB executemany costs ~ms per row).
+    Duplicates on `key` keep the last row, as consecutive INSERT OR REPLACE would."""
+    import pandas as pd
+
+    return pd.DataFrame([astuple(r) for r in rows], columns=cols).drop_duplicates(
+        subset=key, keep="last")
+
+
 def upsert_facts(con: duckdb.DuckDBPyConnection, facts: list[Fact]) -> None:
     if facts:
-        con.executemany(
-            "INSERT OR REPLACE INTO fundamentals VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [astuple(f) for f in facts],
-        )
+        df = _frame(facts, ["ticker", "period_end", "filed_date", "item", "value", "unit",
+                            "source", "filed_estimated"],
+                    ["ticker", "period_end", "filed_date", "item", "source"])
+        cur = con.cursor()  # own result slot (DuckDB 2: an unfetched result blocks register)
+        cur.register("_facts", df)
+        cur.execute("INSERT OR REPLACE INTO fundamentals SELECT * FROM _facts").fetchall()
+        cur.unregister("_facts")
+        cur.close()
 
 
 def upsert_prices(con: duckdb.DuckDBPyConnection, bars: list[PriceBar]) -> None:
     """Upsert bars. A spark bar (no volume/adj_close) never clears what a chart bar stored."""
     if bars:
-        con.executemany(
-            "INSERT INTO prices_daily VALUES (?, ?, ?, ?, ?, ?) "
+        df = _frame(bars, ["ticker", "date", "close", "adj_close", "volume", "source"],
+                    ["ticker", "date"])
+        cur = con.cursor()  # own result slot (DuckDB 2: an unfetched result blocks register)
+        cur.register("_bars", df)
+        cur.execute(
+            "INSERT INTO prices_daily SELECT * FROM _bars "
             "ON CONFLICT (ticker, date) DO UPDATE "
             "SET close = excluded.close, "
             "adj_close = coalesce(excluded.adj_close, prices_daily.adj_close), "
             "volume = coalesce(excluded.volume, prices_daily.volume), "
             "source = CASE WHEN excluded.volume IS NULL AND prices_daily.volume IS NOT NULL "
-            "THEN prices_daily.source ELSE excluded.source END",
-            [astuple(b) for b in bars],
-        )
+            "THEN prices_daily.source ELSE excluded.source END").fetchall()
+        cur.unregister("_bars")
+        cur.close()
 
 
 def upsert_dividends(con: duckdb.DuckDBPyConnection, divs: list[Dividend]) -> None:
     if divs:
-        con.executemany("INSERT OR REPLACE INTO dividends VALUES (?, ?, ?, ?, ?)",
-                        [astuple(d) for d in divs])
+        df = _frame(divs, ["ticker", "ex_date", "amount", "currency", "source"],
+                    ["ticker", "ex_date", "source"])
+        cur = con.cursor()  # own result slot (DuckDB 2: an unfetched result blocks register)
+        cur.register("_divs", df)
+        cur.execute("INSERT OR REPLACE INTO dividends SELECT * FROM _divs").fetchall()
+        cur.unregister("_divs")
+        cur.close()
 
 
 def upsert_security(con, ticker: str, row: dict, profile: dict) -> None:
@@ -196,6 +218,7 @@ def ingest(
     refresh_fundamentals: bool = False,
     workers: int = 4,
     now: datetime | None = None,
+    benchmarks: bool | None = None,
 ) -> dict:
     """Incremental ingest.
 
@@ -320,7 +343,8 @@ def ingest(
                     errors[t] = err
                     continue
                 upsert_facts(con, sec_edgar.parse_companyfacts(t, payload)
-                             + sec_edgar.parse_quarterly_ni(t, payload))
+                             + sec_edgar.parse_quarterly_ni(t, payload)
+                             + sec_edgar.parse_quarterly_flows(t, payload))
                 _log_fetch(con, t, "sec_edgar", now, marker)
                 stats["edgar_filings"] += 1
 
@@ -332,4 +356,14 @@ def ingest(
         errors["FX:USDCAD"] = f"{type(e).__name__}: {e}"
 
     stats["rates"] = ingest_rates(con, rp, as_of, errors)
+    # Benchmarks (spec docs/models/benchmarks.md): 9 chart calls, 6 years for the 5y return.
+    # Default: only with the real Yahoo provider (injected providers are offline test doubles).
+    from ..benchmarks import ingest_benchmarks
+
+    if benchmarks is None:
+        benchmarks = yahoo_provider is None
+    bench_errs = (ingest_benchmarks(con, yp, as_of - timedelta(days=6 * 366), as_of)
+                  if benchmarks else {})
+    for k, err in bench_errs.items():
+        errors[f"BENCHMARK:{k}"] = err
     return {"tickers": len(tickers), "errors": errors, "stats": stats}

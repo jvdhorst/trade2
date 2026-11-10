@@ -67,7 +67,8 @@ SIGNALS_DISCLAIMER = (
 
 
 def write_signals(df: pd.DataFrame, as_of, out_root: str | Path = "reports",
-                  disclaimer: str | None = None) -> tuple[Path, Path]:
+                  disclaimer: str | None = None,
+                  header: list[str] | None = None) -> tuple[Path, Path]:
     """Report v2 (spec docs/models/residual_income.md §Report v2): CSV with a comment header line,
     Parquet with the same text under the schema metadata key `disclaimer`."""
     import pyarrow as pa
@@ -79,10 +80,14 @@ def write_signals(df: pd.DataFrame, as_of, out_root: str | Path = "reports",
     csv_path, pq_path = out / "screen_signals.csv", out / "screen_signals.parquet"
     with open(csv_path, "w") as fh:
         fh.write(f"# {text}\n")
+        for line in header or []:  # e.g. the benchmark block (benchmarks.md, Outputs 2)
+            fh.write(f"# {line}\n")
         df.to_csv(fh, index=False, float_format="%.6g")
     table = pa.Table.from_pandas(df, preserve_index=False)
     meta = dict(table.schema.metadata or {})
     meta[b"disclaimer"] = text.encode()
+    if header:
+        meta[b"benchmarks"] = "\n".join(header).encode()
     pq.write_table(table.replace_schema_metadata(meta), pq_path)
     return csv_path, pq_path
 
@@ -93,3 +98,14 @@ def signal_summary(counts: dict) -> list[str]:
         for market, c in by_market.items():
             lines.append(f"model {model} {market}: " + ", ".join(f"{k} {v}" for k, v in c.items()))
     return lines
+
+
+def write_benchmarks(table: pd.DataFrame, as_of, out_root: str | Path = "reports") -> Path:
+    out = Path(out_root) / str(as_of)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "benchmarks.csv"
+    with open(path, "w") as fh:
+        fh.write("# Benchmark yields and returns (docs/models/benchmarks.md): context for the "
+                 "screen, not signals, not investment advice.\n")
+        table.to_csv(fh, index=False, float_format="%.6g")
+    return path

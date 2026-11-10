@@ -19,7 +19,15 @@ from . import metrics as m
 
 MODELS = {"A": "Model A (residual income)", "B": "Model B (P/B ~ ROE)",
           "A_BOOK": "Model A restricted to book sectors",
-          "BASELINE_PB": "Baseline: low P/B buckets (book sectors)"}
+          "BASELINE_PB": "Baseline: low P/B buckets (book sectors)",
+          "C": "Model C (value-quality-momentum-risk composite)",
+          "C_V": "Model C factor V (value), diagnostic",
+          "C_Q": "Model C factor Q (quality), diagnostic",
+          "C_M": "Model C factor M (momentum 12-1), diagnostic",
+          "C_R": "Model C factor R (low volatility), diagnostic"}
+# Model C diagnostic factors (composite.md, Data mapping / Backtest): label column, score column.
+C_FACTORS = {"C_V": ("c_v_label", "c_value"), "C_Q": ("c_q_label", "c_quality"),
+             "C_M": ("c_m_label", "c_momentum"), "C_R": ("c_r_label", "c_risk")}
 Q1_PB_SPLIT = 2.9
 Q4_MIN_SUBIND = 12
 PRICE_LOOKBACK_DAYS = 10
@@ -83,6 +91,13 @@ def model_panel(rows: pd.DataFrame, model: str) -> pd.DataFrame:
         base = m.low_pb_baseline(pb_in)
         x = x.drop(columns=["pb"]).merge(base[["date", "ticker", "pb", "label", "score"]],
                                          on=["date", "ticker"], how="left")
+    elif model == "C":
+        x["label"] = rows["c_signal"].to_numpy()
+        x["score"] = np.where(rows["c_signal"].isin(m.SIGNALS), rows["c_score"], np.nan)
+    elif model in C_FACTORS:
+        lab, sc = C_FACTORS[model]
+        x["label"] = rows[lab].fillna("NO_SIGNAL").to_numpy()
+        x["score"] = np.where(rows[lab].notna(), rows[sc], np.nan)
     else:
         raise ValueError(model)
     return x
@@ -463,4 +478,62 @@ def render_diag(diag: list[dict]) -> str:
                 groups = d["groups"]
     if groups:
         L += ["", "Split groups that occurred: " + "; ".join(groups)]
+    return "\n".join(L)
+
+
+# ---------- benchmark excess (benchmarks.md, API contract; P8-10) ----------
+
+def benchmark_fwd(con, key: str, dates: list[date]) -> pd.DataFrame:
+    """The benchmark's forward return per (date, horizon), same t0/t1 rule as the stocks."""
+    try:
+        px = con.execute("SELECT key AS ticker, date, adj_close FROM benchmarks_daily "
+                         "WHERE key=?", [key]).df()
+    except Exception:  # noqa: BLE001 - table absent: run `valuation backtest benchmarks`
+        return pd.DataFrame(columns=["date", "horizon", "ret"])
+    if px.empty:
+        return pd.DataFrame(columns=["date", "horizon", "ret"])
+    px["date"] = [_d(x) for x in px["date"]]
+    fr = m.forward_returns(px, dates)
+    return fr[["date", "horizon", "ret"]]
+
+
+def benchmark_excess_tables(results: dict, bench: pd.DataFrame, dates: list[date],
+                            models=("A", "B", "C")) -> dict[str, pd.DataFrame]:
+    out = {}
+    for model in models:
+        if model not in results:
+            continue
+        obs = results[model]["obs"]
+        obs = obs[obs["eligible"]][["date", "ticker", "horizon", "label", "ret"]]
+        out[model] = m.benchmark_excess(obs, bench, set(dates))
+    return out
+
+
+def render_benchmark_excess(tables: dict[str, pd.DataFrame], key: str) -> str:
+    L = [f"Benchmark `{key}`; excess = equal-weighted mean forward return of the bucket minus the "
+         "benchmark's forward return over the same window (local currency). Reported alongside "
+         "the pass bar, not a pass criterion. ALL = every eligible name.", "",
+         "| Model | Bucket | 3m mean excess | 6m | 12m | 12m dates | 12m years > 0 |",
+         "|---|---|---|---|---|---|---|"]
+    for model, bd in tables.items():
+        y = m.yearly_benchmark_excess(bd)
+        for b in m.EXCESS_BUCKETS:
+            cells = []
+            for h in m.HORIZONS:
+                v = bd[(bd["horizon"] == h) & (bd["bucket"] == b)]["excess"].dropna()
+                cells.append(fmt(float(v.mean()) if len(v) else math.nan, True))
+            v12 = bd[(bd["horizon"] == 12) & (bd["bucket"] == b)]["excess"].dropna()
+            y12 = y[(y["horizon"] == 12) & (y["bucket"] == b)]["excess"]
+            L.append(f"| {model} | {b} | {' | '.join(cells)} | {len(v12)} | "
+                     f"{int((y12 > 0).sum())}/{len(y12)} |")
+    L += ["", "Per-year 12m excess of the BUY bucket:", "",
+          "| Year | " + " | ".join(tables) + " |", "|---" * (len(tables) + 1) + "|"]
+    ys = {k: m.yearly_benchmark_excess(v) for k, v in tables.items()}
+    years = sorted({int(r) for y in ys.values() for r in y["year"]})
+    for yr in years:
+        cells = []
+        for k in tables:
+            r = ys[k][(ys[k]["year"] == yr) & (ys[k]["horizon"] == 12) & (ys[k]["bucket"] == "BUY")]
+            cells.append(fmt(float(r["excess"].iloc[0]), True) if len(r) else "n/a")
+        L.append(f"| {yr} | " + " | ".join(cells) + " |")
     return "\n".join(L)

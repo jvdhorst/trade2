@@ -38,7 +38,7 @@ def backtest_cmd(args) -> int:
                                 "USING (ticker) WHERE c.market='TSX'").fetchone()[0]
             members = {d: t for d, t in members.items() if first is not None and d >= first}
             # Model B pools TSX and US names, as the live run does.
-            us = runner.members_by_date(con, "US", list(members))
+            us = runner.members_by_date(con, "US", list(members), record=False)
             members = {d: sorted(set(t) | set(us[d])) for d, t in members.items()}
         n_ret = runner.compute_returns(con, dates)
         con.close()

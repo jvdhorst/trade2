@@ -8,7 +8,7 @@ runner), `bt_returns`, `bt_universe`, `bt_ticker_coverage`. Output tables (spec 
 from __future__ import annotations
 
 import math
-from datetime import date
+from datetime import date, datetime
 from unittest import mock
 
 import numpy as np
@@ -39,7 +39,8 @@ OUT_DDL = [
 
 
 def _d(x):
-    return x.date() if hasattr(x, "date") and not isinstance(x, date) else x
+    """Timestamp / datetime -> date (a pandas Timestamp is also a `date` instance)."""
+    return x.date() if isinstance(x, datetime) else x
 
 
 def _f(v) -> float:
@@ -211,7 +212,10 @@ def diagnostics(a_obs: pd.DataFrame, b_obs: pd.DataFrame, rows: pd.DataFrame,
     return out
 
 
-def _refit(day: pd.DataFrame) -> pd.DataFrame:
+Q4_EXCLUDED = ("Transaction & Payment Processing Services", "Financial Exchanges & Data")
+
+
+def _refit(day: pd.DataFrame, mode: str = "split") -> pd.DataFrame:
     """Model B for Financials only, grouped by GICS sub-industry where a sub-industry has
     >= Q4_MIN_SUBIND names in the fit set; the rest pools as 'Financials-other' (spec §7 Q4)."""
     from ..models import peer_regression as pr
@@ -225,6 +229,16 @@ def _refit(day: pd.DataFrame) -> pd.DataFrame:
     if not obs:
         return pd.DataFrame(columns=["ticker", "label", "score", "group"])
     sub = dict(zip(f["ticker"], f["sub_industry"], strict=True))
+    if mode == "ex_pay_data":  # P7-14: payments/exchanges/data names left out of the fit set
+        obs = [o for o in obs if sub.get(o.ticker) not in Q4_EXCLUDED]
+        groups = {o.ticker: "Financials ex payments/exchanges" for o in obs}
+        with mock.patch.object(pr, "BOOK_SECTORS", frozenset(groups.values())):
+            res, _ = pr.run_peer_regression(
+                [pr.PBObs(**{**o.__dict__, "sector": groups[o.ticker]}) for o in obs])
+        return pd.DataFrame([{"ticker": r.ticker, "label": r.signal,
+                              "score": -r.residual if r.residual is not None
+                              and r.signal in m.SIGNALS else math.nan,
+                              "group": groups[r.ticker]} for r in res])
     n_fit: dict = {}
     for o in obs:
         if pr._in_fit(o) and sub.get(o.ticker):
@@ -248,18 +262,27 @@ def financials_split(b_obs: pd.DataFrame, rows: pd.DataFrame, dates: list[date])
     ds = set(dates)
     base = b_obs[(b_obs["sector"] == "Financials") & b_obs["date"].isin(ds)]
     day_rows = rows[(rows["sector"] == "Financials") & rows["date"].isin(ds)]
-    refit = []
-    for d, day in day_rows.groupby("date"):
-        rf = _refit(day)
-        rf["date"] = d
-        refit.append(rf)
-    refit = (pd.concat(refit) if refit else
-             pd.DataFrame(columns=["ticker", "label", "score", "group", "date"]))
-    split = base.drop(columns=["label", "score"]).merge(
-        refit[["date", "ticker", "label", "score", "group"]], on=["date", "ticker"], how="left")
-    split["label"] = split["label"].fillna("NO_SIGNAL")
-    groups = sorted(split["group"].dropna().unique().tolist())
-    for bucket, obs in (("B", base), ("B_FIN_SPLIT", split)):
+    variants = {"B": base}
+    groups = []
+    for bucket, mode in (("B_FIN_SPLIT", "split"), ("B_FIN_EX_PAY_DATA", "ex_pay_data")):
+        refit = []
+        for d, day in day_rows.groupby("date"):
+            rf = _refit(day, mode)
+            rf["date"] = d
+            refit.append(rf)
+        refit = (pd.concat(refit) if refit else
+                 pd.DataFrame(columns=["ticker", "label", "score", "group", "date"]))
+        v = base.drop(columns=["label", "score"]).merge(
+            refit[["date", "ticker", "label", "score", "group"]], on=["date", "ticker"],
+            how="left")
+        v["label"] = v["label"].fillna("NO_SIGNAL")
+        if mode == "split":
+            groups = sorted(v["group"].dropna().unique().tolist())
+        else:  # same subset as B for comparability: the excluded names get no label
+            v = v[~v["sub_industry"].isin(Q4_EXCLUDED)]
+        variants[bucket] = v
+    variants["B_EX_PAY_DATA_SUBSET"] = base[~base["sub_industry"].isin(Q4_EXCLUDED)]
+    for bucket, obs in variants.items():
         bd = m.spread_by_date(obs, ds)
         ic = m.rank_ic(obs, ds)
         hits = m.hit_rates(obs, ds)

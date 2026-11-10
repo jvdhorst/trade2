@@ -230,13 +230,15 @@ def _rates_fx(con, cache: RawCache, today: date) -> None:
                     ["date", "pair"])
 
 
-def members_by_date(con, universe: str, dates: list[date]) -> dict[date, list[str]]:
+def members_by_date(con, universe: str, dates: list[date],
+                    record: bool = True) -> dict[date, list[str]]:
     """US: point-in-time S&P 500 members with prices and a security row. TSX: current
     constituents (survivor-biased). Records every member-date in bt_universe."""
     cov = {t: hp for t, hp in con.execute(
         "SELECT ticker, has_price FROM bt_ticker_coverage").fetchall()}
     con.execute(UNIVERSE_DDL)
-    con.execute("DELETE FROM bt_universe WHERE universe=?", [universe])
+    if record:
+        con.execute("DELETE FROM bt_universe WHERE universe=?", [universe])
     out, rows = {}, []
     if universe == "US":
         valid = [mem.Interval(t, s, e) for t, s, e in con.execute(
@@ -253,7 +255,8 @@ def members_by_date(con, universe: str, dates: list[date]) -> dict[date, list[st
         for d in dates:
             rows += [[universe, d, t, bool(cov.get(t))] for t in tsx]
             out[d] = [t for t in tsx if cov.get(t)]
-    con.executemany("INSERT INTO bt_universe VALUES (?,?,?,?)", rows)
+    if record:
+        con.executemany("INSERT INTO bt_universe VALUES (?,?,?,?)", rows)
     return out
 
 

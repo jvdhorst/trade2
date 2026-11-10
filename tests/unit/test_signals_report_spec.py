@@ -31,7 +31,10 @@ COLUMNS = [
     "ticker", "market", "sector", "eligible", "elig_fail_reason", "price", "bvps", "pb", "roe0",
     "a_signal", "a_no_signal_reason", "a_mos", "a_v_ri", "a_mos_up", "a_mos_down",
     "a_justified_pb", "b_signal", "b_no_signal_reason", "b_implied_upside", "b_resid_pct",
-    "b_fitted_pb", "b_fair_value", "flags",
+    "b_fitted_pb", "b_fair_value",
+    # Model C columns (composite.md 0.1.0, Data mapping / Report), before flags
+    "c_signal", "c_no_signal_reason", "c_score", "c_pct", "c_n_factors", "c_value",
+    "c_quality", "c_momentum", "c_risk", "flags",
 ]
 
 _SECTION = dict(min_mdtv=1, min_market_cap=0, min_price=0, mdtv_window=1,

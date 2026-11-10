@@ -35,6 +35,9 @@ BT_DDL = [
         roe0 DOUBLE, roe_raw DOUBLE, a_signal VARCHAR, a_reason VARCHAR, a_mos DOUBLE,
         b_signal VARCHAR, b_reason VARCHAR, b_residual DOUBLE, b_resid_pct DOUBLE,
         b_upside DOUBLE, b_n_fit INTEGER, b_r2 DOUBLE, flags VARCHAR,
+        c_signal VARCHAR, c_reason VARCHAR, c_score DOUBLE, c_value DOUBLE, c_quality DOUBLE,
+        c_momentum DOUBLE, c_risk DOUBLE, c_v_label VARCHAR, c_q_label VARCHAR,
+        c_m_label VARCHAR, c_r_label VARCHAR,
         PRIMARY KEY (universe, date, ticker))""",
     """CREATE TABLE IF NOT EXISTS bt_dates (
         universe VARCHAR, date DATE, n_members INTEGER, n_with_price INTEGER, seconds DOUBLE,
@@ -44,6 +47,13 @@ BT_DDL = [
         thresholds_hash VARCHAR, git_sha VARCHAR, today DATE, n_dates INTEGER,
         model_version VARCHAR)""",
 ]
+
+
+C_ROW_TYPES = {"c_signal": "VARCHAR", "c_reason": "VARCHAR", "c_score": "DOUBLE",
+               "c_value": "DOUBLE", "c_quality": "DOUBLE", "c_momentum": "DOUBLE",
+               "c_risk": "DOUBLE", "c_v_label": "VARCHAR", "c_q_label": "VARCHAR",
+               "c_m_label": "VARCHAR", "c_r_label": "VARCHAR"}
+C_ROW_COLS = list(C_ROW_TYPES)
 
 
 def month_end(y: int, m: int) -> date:
@@ -90,11 +100,13 @@ def _consts(module) -> dict:
 
 def thresholds_hash(liquidity: dict | None = None) -> str:
     """sha256 of the frozen model constants + liquidity config (spec §2)."""
+    from ..models import composite as cm
     from ..models import eligibility as elig
     from ..models import peer_regression as pr
     from ..models import residual_income as ri
 
     obj = {"residual_income": _consts(ri), "peer_regression": _consts(pr),
+           "composite": {k: v for k, v in _consts(cm).items()},
            "liquidity": liquidity if liquidity is not None else elig.load_config()}
     blob = json.dumps(obj, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode()).hexdigest()
@@ -169,7 +181,11 @@ def run_one(db_path: str, d: date, tickers: list[str], csm_path=None) -> tuple[d
             r.get("price"), r.get("bvps"), r.get("pb"), r.get("roe0"), p.get("roe_raw"),
             r["a_signal"], r["a_no_signal_reason"], r.get("a_mos"), r["b_signal"],
             r["b_no_signal_reason"], p.get("b_residual"), r.get("b_resid_pct"),
-            r.get("b_implied_upside"), p.get("b_n_fit"), p.get("b_r2"), r["flags"]])
+            r.get("b_implied_upside"), p.get("b_n_fit"), p.get("b_r2"), r["flags"],
+            r.get("c_signal"), r.get("c_no_signal_reason"), r.get("c_score"), r.get("c_value"),
+            r.get("c_quality"), r.get("c_momentum"), r.get("c_risk"),
+            *[(p.get("c_factor_labels") or {}).get(k)
+              for k in ("value", "quality", "momentum", "risk")]])
     return d, rows, time.time() - t0
 
 
@@ -213,6 +229,10 @@ def run_backtest(db_path: str, universe: str, members_by_date: dict[date, list[s
     con = duckdb.connect(db_path)
     for ddl in BT_DDL:
         con.execute(ddl)
+    have = {r[0] for r in con.execute("DESCRIBE bt_rows").fetchall()}
+    for col, typ in C_ROW_TYPES.items():  # bt_rows created before Model C (Phase 9)
+        if col not in have:
+            con.execute(f"ALTER TABLE bt_rows ADD COLUMN {col} {typ}")
     con.execute("DELETE FROM bt_rows WHERE universe=?", [universe])
     con.execute("DELETE FROM bt_dates WHERE universe=?", [universe])
     recs, dates = [], []
@@ -225,10 +245,10 @@ def run_backtest(db_path: str, universe: str, members_by_date: dict[date, list[s
     cols = ["universe", "date", "ticker", "market", "sector", "eligible", "elig_fail_reason",
             "price", "bvps", "pb", "roe0", "roe_raw", "a_signal", "a_reason", "a_mos",
             "b_signal", "b_reason", "b_residual", "b_resid_pct", "b_upside", "b_n_fit", "b_r2",
-            "flags"]
+            "flags", *C_ROW_COLS]
     df = pd.DataFrame(recs, columns=cols)
     con.register("_df", df)
-    con.execute("INSERT INTO bt_rows SELECT * FROM _df")
+    con.execute(f"INSERT INTO bt_rows ({', '.join(cols)}) SELECT * FROM _df")
     con.unregister("_df")
     con.executemany("INSERT INTO bt_dates VALUES (?,?,?,?,?)", dates)
     con.close()

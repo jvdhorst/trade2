@@ -1,7 +1,8 @@
 # System architecture (SW)
 
 Status: as built on 2026-11-09 (book_value 0.2.0, Phase 6 data batch 1 + eligibility 0.1.0, Phase 7 Model A
-residual_income 0.1.0 + Model B peer_regression 0.1.0 book branch + report v2, Phase 8 backtest 0.1.0). Planned
+residual_income 0.1.0 + Model B peer_regression 0.1.0 book branch + report v2, Phase 8 backtest 0.1.0, Phase 9
+data batch 2 (ttm 0.2.0) + Model C composite 0.1.0 + benchmarks 0.1.1). Planned
 components are dashed.
 
 ## Data flow
@@ -33,7 +34,8 @@ flowchart LR
     subgraph DB["DuckDB data/valuation.duckdb"]
         SEC[(securities)]
         PR[(prices_daily)]
-        FU[(fundamentals<br/>keyed by filed_date<br/>incl. ni_common_q)]
+        FU[(fundamentals<br/>keyed by filed_date<br/>NI, CFO, capex, revenue, GP, EBIT quarters<br/>assets, debt, cash)]
+        BD[(benchmarks_daily<br/>benchmark_dists)]
         DV[(dividends)]
         RT[(rates_daily)]
         FX[(fx_daily)]
@@ -48,9 +50,10 @@ flowchart LR
         BV["book_value 0.2.0<br/>BVPS, P/B, peer median FV"]
         RI["Model A residual_income 0.1.0<br/>ROE fade to r = 10y + 5% ERP<br/>MoS, r ± 1pp"]
         PB["Model B peer_regression 0.1.0<br/>Theil–Sen ln(P/B) ~ ROE per GICS sector<br/>(book branch; EV branch planned)"]
-        CMP["Model C factor composite"]:::planned
+        CMP["Model C composite 0.1.0<br/>V/Q/M/R sector z (pooled), equal weights<br/>quintiles + distress / momentum vetoes"]
+        BMK["benchmarks 0.1.1<br/>SPX_TR, SPY/IVV/VOO, TSX, XIC/XIU/ZCN<br/>dist yield vs 10y, TR 1m-5y"]
         ELIG["eligibility 0.1.0<br/>config/liquidity.yaml"]
-        TTM["ttm: TTM NI, DPS_TTM"]
+        TTM["ttm 0.2.0: flow_ttm (NI, CFO, capex, GP, ...), DPS_TTM"]
     end
 
     subgraph BTS["Backtest (src/valuation/backtest, spec backtest.md)"]
@@ -65,7 +68,8 @@ flowchart LR
     subgraph OUT["Outputs (reports/&lt;date&gt;/)"]
         SCR["screen_book_value.csv / .parquet"]
         COV["coverage_book_value.csv<br/>+ eligible, elig_fail_reason"]
-        SIG["screen_signals.csv / .parquet<br/>per-model BUY / HOLD / SELL / NO_SIGNAL / NOT_ELIGIBLE<br/>(no vote until Phase 10)"]
+        SIG["screen_signals.csv / .parquet<br/>Models A/B/C: BUY / HOLD / SELL / NO_SIGNAL / NOT_ELIGIBLE<br/>benchmark header block (no vote until Phase 10)"]
+        BCSV["benchmarks.csv"]
     end
 
     subgraph QA["QA (src/valuation/qa, tests/)"]
@@ -86,21 +90,25 @@ flowchart LR
     ENG --> ELIG --> VAL
     ENG --> TTM --> VAL
     ELIG --> RI & PB
-    ELIG -.-> CMP
+    ELIG --> CMP
     TTM --> RI
-    TTM -.-> CMP
+    TTM --> CMP
+    RI -->|"b0, roe_raw, NI"| CMP
+    YC --> BD --> BMK
+    BMK --> SIG & BCSV
+    BD -->|"SPX_TR / XIC fwd returns"| MET
     RT --> RI
     CSM --> RI
     ENG --> RI
     RI -->|"b0, ROE_raw"| PB
     RI & PB --> SG --> SIG
-    CMP -.-> SIG
+    CMP --> SG
     WH --> MEM --> BDB
     YC -->|"period1/period2, daily"| BDB
     EC -->|"full history"| BDB
     BDB --> BT
     RI & PB --> BT
-    CMP -.-> BT
+    CMP --> BT
     BT --> MET --> BTR
     SG --> IC
     VAL --> SCR & COV
@@ -142,7 +150,8 @@ sequenceDiagram
     CLI->>D: value --universe ... (engine + book_value)
     D-->>CLI: valuations, runs
     CLI->>CLI: eligibility filter, TTM NI, DPS, rf; write screen + coverage reports
-    CLI->>CLI: Model A per ticker, then Model B per sector (pooled TSX + US); write screen_signals
+    P->>Y: chart for 9 benchmarks (6y) → benchmarks_daily
+    CLI->>CLI: Model A per ticker, Model B per sector, Model C cross-section (pooled TSX + US); write screen_signals + benchmarks.csv
     CLI->>D: crosscheck / crosscheck --issuer (QA)
 ```
 
@@ -152,6 +161,7 @@ sequenceDiagram
 | No look-ahead | Fundamentals keyed by `filed_date`; `select_latest_filing` and a guard in `compute_book_value`; quarterly NI emitted per filing date (a derived Q4 gets the 10-K date); prices, dividends and rates `≤ as_of` (not even stored beyond it) |
 | Reproducible | Raw responses cached per day; each valuation row stores `inputs_json`, `model_version`, and the run's git SHA |
 | Idempotent | `INSERT OR REPLACE` upserts on natural keys; re-runs are a no-op |
+| Bulk upserts | Facts, bars and dividends are inserted as registered DataFrames (P8-8): S&P 500 first load 502 s (was 36 min), TSX 200 s |
 | Fast daily run | Batch prices, one 5-day chart call per ticker for volume, and a refresh policy (`fetch_log`): 251 s for 718 tickers (≤ 5 min target); first load ~45 min incl. the 2-year history backfill |
 | Signals are not advice | Every screen_signals file starts with the disclaimer line (Parquet: metadata `disclaimer`); per-model labels only, no vote before Phase 10 |
 | Backtest point in time | Own DB; prices stored as traded (Yahoo split adjustment undone) so price × shares-as-filed is a real market cap; shares × splits in (filed, d], dividends ÷ splits in (ex, d]; facts `filed_date ≤ d` (+30 days for estimated Yahoo dates); membership on d from the Wikipedia changes table; holdout (last 36 month-ends) computed only with `--holdout`, logged in `bt_runs` with a thresholds hash |

@@ -1,4 +1,4 @@
-# Model spec: Backtest harness (`backtest`, v0.1.0) — Phase 8
+# Model spec: Backtest harness (`backtest`, v0.2.0) — Phase 8, extended in Phase 9
 
 Owner: AN · Tests: QA (`tests/unit/test_backtest_membership_spec.py`, `test_backtest_metrics_spec.py`,
 `test_backtest_engine_spec.py`) · Code: `src/valuation/backtest/` (`membership.py`, `metrics.py`, `engine.py`) ·
@@ -347,7 +347,23 @@ tuple[str, ...], incomplete_legs: tuple[str, ...])`. Frames carry exactly the co
 - **D6** all runs are recorded in `bt_runs` (kind `in_sample` or `holdout`), not only holdout runs; `spread_by_date` is
   an extra public helper. TSX results never enter the pass bar.
 
+## 9. Phase 9 extension (v0.2.0): Model C and excess vs benchmark
+- **Models.** `bt_rows` gains `c_signal, c_reason, c_score, c_value, c_quality, c_momentum, c_risk` and the four
+  factor labels `c_v_label … c_r_label` (written by the unchanged per-date `run_signals`, which now also runs
+  Model C). Report models: `C` (label `c_signal`, score S where the label ∈ {BUY, HOLD, SELL}) and the diagnostics
+  `C_V, C_Q, C_M, C_R` (label = factor label, score = factor score where the label exists), spec `composite.md`
+  Data mapping. §4 metrics apply unchanged; the pass bar (§4.8) is evaluated for `C` like A and B; the factor rows
+  are diagnostics (their pass line is printed but not a verdict).
+- **Thresholds hash** (§2) now also covers the composite constants (`obj["composite"]`), so the hash differs from
+  Phase 8's `203efff9…` although no A/B constant changed.
+- **Excess vs benchmark** (`benchmarks.md`, API contract): `benchmark_excess` / `yearly_benchmark_excess` per model
+  A, B, C and bucket BUY / SELL / ALL (eligible names), benchmark = `primary_return_benchmark(market)` (`SPX_TR`,
+  `XIC`), forward returns of the benchmark from `forward_returns` on `benchmarks_daily.adj_close` (loaded by
+  `valuation backtest benchmarks`). Reported in-sample (and holdout with `--holdout`), never a pass criterion.
+
 ## Changelog
+- **0.2.0:** §9: Model C + factor diagnostics, composite constants in the thresholds hash, excess vs benchmark (P9-4,
+  P9-5).
 - **0.1.1:** QA review: removal dated exactly `start` yields no interval; split window ends at the price date;
   the merge step is a safety net. Changes table source moved to *Historical components of the S&P 500* (2026-08-11).
 - **0.1.0:** initial version (P8-0). Golden values computed with numpy/pandas/scipy (`rankdata`, `spearmanr` agree).

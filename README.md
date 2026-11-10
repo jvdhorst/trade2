@@ -11,7 +11,7 @@ It does no trading. Updates run about once a day. Every number traces back to a 
 uv sync
 uv run valuation init                                 # create data/valuation.duckdb
 uv run valuation ingest --universe universe/reference.csv   # prices + whatever is due (see below)
-uv run valuation value                                # screen_book_value + screen_signals (Models A/B) in reports/<date>/
+uv run valuation value                                # screen_book_value + screen_signals (Models A/B/C) + benchmarks.csv in reports/<date>/
 uv run valuation crosscheck                           # compare against Yahoo's published book value
 uv run valuation crosscheck --issuer                  # issuer supplementary packs: BVPS (±3%) and ROE (±1.5pp)
 uv run valuation universe                             # rebuild TSX Composite + S&P 500 lists
@@ -24,7 +24,8 @@ uv run pytest                                         # offline tests (network t
 | Volume, adj. close, dividends | every run, one chart call per ticker (shared ≈4 req/s limit) | Yahoo chart API: a 2-year backfill once, then 5 days a day; full refetch when a new dividend/split appears (adj_close is rebased) or after a gap > 7 days |
 | Risk-free 10y | every run | Bank of Canada Valet `BD.CDN.10YR.DQ.YLD`, FRED `DGS10` → `rates_daily` (back to 2013 on first load) |
 | TSX fundamentals | new ticker, data older than 7 days, or a new quarter expected (period end + 136 days; re-checked daily) | Yahoo fundamentals-timeseries, only the fields the model uses |
-| US fundamentals | new ticker, or a new accession for the CIK in the EDGAR frames API (1 call per quarter covers every US filer) | EDGAR companyfacts, trimmed to the parsed concepts before caching (balance sheet + quarterly NI to common) |
+| US fundamentals | new ticker, or a new accession for the CIK in the EDGAR frames API (1 call per quarter covers every US filer) | EDGAR companyfacts, trimmed to the parsed concepts before caching (balance sheet incl. assets/debt/cash + quarterly NI, CFO, capex, revenue, gross profit, EBIT; tag chains in [`ttm.md`](docs/models/ttm.md) §5) |
+| Benchmarks | every run (9 chart calls) | Yahoo chart API, 6 years of daily bars + distributions for the keys in [`universe/benchmarks.csv`](universe/benchmarks.csv) → `benchmarks_daily`, `benchmark_dists` |
 | Profiles | new ticker or older than 30 days | Yahoo quoteSummary, with a crumb-free fallback |
 
 ```bash
@@ -40,12 +41,18 @@ TTM NI to common (`ni_common_ttm`, spec [`docs/models/ttm.md`](docs/models/ttm.m
 yield `rf`. The run prints the removal rate per market and rule; the thresholds are recorded in `runs.config_json`.
 ### Screening signals (Phase 7): `reports/<date>/screen_signals.{csv,parquet}`
 *Screening signals for human review, not investment advice.* The file's first line (Parquet: metadata
-`disclaimer`) says so. One row per ticker with two independent model views and no combined vote (that comes in Phase 10):
+`disclaimer`) says so. One row per ticker with three independent model views and no combined vote (that comes in Phase 10, gated on ≥ 2
+models passing the backtest):
 
 | Model | Spec | Signal rule |
 |---|---|---|
 | A, residual income | [`residual_income.md`](docs/models/residual_income.md) | ROE_0 = TTM NI to common / avg common equity, clipped to [−10%, 35%], fading linearly to `r = 10y yield + 5%` over 10 years. BUY if MoS ≥ +25% and still > 0 at r+1pp; SELL if MoS ≤ −20% and still < 0 at r−1pp |
 | B, P/B ~ ROE (book branch) | [`peer_regression.md`](docs/models/peer_regression.md) | Theil–Sen `ln(P/B) ~ ROE` per GICS sector (Financials, Utilities, Real Estate, Energy, Materials), TSX + US pooled, n ≥ 12 and R² ≥ 0.20. BUY if residual percentile ≤ 20% and upside ≥ +15%; SELL if ≥ 80% and ≤ −15% |
+| C, value–quality–momentum–risk composite | [`composite.md`](docs/models/composite.md) | Metrics E/P, B/P, FCF/P · ROE, GP/A, −accruals, −leverage · 12-1 momentum · −252d volatility; 5/95 winsorized (pooled), z-scored within GICS sector (TSX + US pooled), equal-weighted factors, ≥ 3 of 4 required. BUY = top quintile of S, SELL = bottom quintile; BUY vetoed to HOLD on distress (bvps ≤ 0 and NI < 0) or momentum in the bottom 10% |
+
+The file header also carries a benchmark block (S&P 500 TR, SPY/IVV/VOO, S&P/TSX, XIC/XIU/ZCN: trailing distribution
+yield vs the 10-year, 1m–5y total returns; spec [`benchmarks.md`](docs/models/benchmarks.md)); full metrics are in
+`reports/<date>/benchmarks.csv`.
 
 Each model column is `BUY`, `HOLD`, `SELL`, `NO_SIGNAL` (with a reason code) or `NOT_ELIGIBLE` (fails the
 eligibility filter). IFRS 17 life insurers need the after-tax CSM, a manual input in
@@ -57,7 +64,8 @@ Spec [`docs/models/backtest.md`](docs/models/backtest.md). It has its own DuckDB
 ```bash
 uv run valuation backtest build                  # PIT S&P 500 membership (Wikipedia), daily prices 2012→ (as traded),
                                                  # splits, dividends, EDGAR history, 10y yields, USD/CAD
-uv run valuation backtest run --workers 4        # month-ends 2014→: eligibility → Model A → Model B per date (resumable)
+uv run valuation backtest benchmarks             # benchmark series 2012→ for the excess-vs-benchmark column
+uv run valuation backtest run --workers 4        # month-ends 2014→: eligibility → Models A, B, C per date (resumable)
 uv run valuation backtest report                 # in-sample metrics + diagnostics → reports/backtest/*.md
 uv run valuation backtest report --holdout       # also the locked last 36 month-ends (frozen thresholds; logged in bt_runs)
 uv run valuation backtest run --market TSX       # supplementary: current TSX constituents (survivor-biased, short history)
@@ -69,7 +77,9 @@ How it works:
 - The metrics are: the sector-neutral BUY − SELL spread per year, hit rates against the sector median, the Spearman rank IC with a Newey–West t, turnover, and the pass bar. A low-P/B baseline is reported alongside.
 - Removed index members that Yahoo no longer serves have no prices. US results are therefore labelled a **survivor-biased upper bound**, and the size of the gap is reported.
 
-Results: [`docs/qa/phase8-validation.md`](docs/qa/phase8-validation.md).
+- Model C is reported with its four factors as diagnostics (C_V, C_Q, C_M, C_R: each factor's own spread and IC), and every model's BUY / SELL / ALL buckets get an **excess return vs the market benchmark** (`SPX_TR` for US, `XIC` for TSX), alongside the pass bar.
+
+Results: [`docs/qa/phase8-validation.md`](docs/qa/phase8-validation.md) (A, B), [`docs/qa/phase9-validation.md`](docs/qa/phase9-validation.md) (data batch 2, C, benchmarks).
 
 Per-ticker fetches run on 4 threads (`--workers`), with a shared rate limit (Yahoo ≈4 req/s, SEC ≤10 req/s).
 Fetch history is in the `fetch_log` table.
@@ -97,11 +107,12 @@ src/valuation/
               rates.py
   ingest/     pipeline.py                      universe -> DB
   models/     book_value.py, eligibility.py,   model code (specs: docs/models/*.md)
-              residual_income.py (A), peer_regression.py (B)
+              residual_income.py (A), peer_regression.py (B), composite.py (C)
   backtest/   membership.py, data.py,          Phase 8: PIT S&P 500 membership, backtest DB build,
               engine.py, metrics.py,           per-date runner, metrics, report
               runner.py, report.py
   ttm.py                                       point-in-time TTM flows + DPS_TTM
+  benchmarks.py                                benchmark yields/returns, ingest, report block
   engine.py                                    DB -> model inputs -> valuations table
 config/       liquidity.yaml                   eligibility thresholds
   report/     screen.py                        CSV + Parquet
@@ -110,6 +121,7 @@ universe/     reference.csv                    14-ticker initial-testing subset 
               tsx_composite.csv, sp500.csv     full lists (iShares XIC holdings, Wikipedia)
               issuer_sources.csv               issuer BVPS + ROE disclosures for QA
               insurer_csm.csv                  manual insurer CSM after tax (Model A/B input)
+              benchmarks.csv                   benchmark keys/symbols/roles (spec benchmarks.md)
 ```
 
 *Not investment advice.*

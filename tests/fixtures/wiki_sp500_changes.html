@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html class="client-nojs" lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<title>List of S&amp;P 500 companies - Wikipedia</title>
+</head>
+<!--
+  Hand-written QA fixture (tests/unit/test_backtest_membership_spec.py), NOT a download.
+  It mimics the structure of https://en.wikipedia.org/wiki/List_of_S%26P_500_companies:
+  a first table id="constituents" (one header row) and a table id="changes" with two header
+  rows, rowspan on date / reason cells, and footnote marks (<sup>[n]</sup>).
+  The constituents table is a small subset of the real list; the changes table holds a few
+  REAL index events with their real effective dates (S&P Dow Jones Indices announcements):
+    2024-09-23  added PLTR, DELL, ERIE; removed AAL, ETSY, BIO
+    2024-03-18  added SMCI (removed WHR), added DECK (removed ZION)
+    2023-12-18  added UBER (removed side left empty in this fixture)
+    2023-05-04  removed FRC, First Republic Bank (added side left empty in this fixture)
+    2023-03-15  removed SIVB, SVB Financial Group (added side left empty in this fixture)
+    2020-12-21  added TSLA (removed AIV)
+  Where a pairing was not certain the other side is left empty (a valid row shape on the page).
+-->
+<body>
+<div id="mw-content-text" class="mw-body-content">
+<p>The <b>S&amp;P 500</b> is a stock market index maintained by S&amp;P Dow Jones Indices.</p>
+<h2><span class="mw-headline" id="S&amp;P_500_component_stocks">S&amp;P 500 component stocks</span></h2>
+<table class="wikitable sortable sticky-header" id="constituents">
+<tbody>
+<tr>
+<th>Symbol</th>
+<th>Security</th>
+<th>GICS Sector</th>
+<th>GICS Sub-Industry</th>
+<th>Headquarters Location</th>
+<th>Date added</th>
+<th>CIK</th>
+<th>Founded</th>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nyse.com/quote/XNYS:MMM">MMM</a></td>
+<td><a href="/wiki/3M" title="3M">3M</a></td>
+<td>Industrials</td>
+<td>Industrial Conglomerates</td>
+<td><a href="/wiki/Saint_Paul,_Minnesota" title="Saint Paul, Minnesota">Saint Paul, Minnesota</a></td>
+<td>1957-03-04</td>
+<td>0000066740</td>
+<td>1902</td>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nyse.com/quote/XNYS:BRK.B">BRK.B</a></td>
+<td><a href="/wiki/Berkshire_Hathaway" title="Berkshire Hathaway">Berkshire Hathaway</a></td>
+<td>Financials</td>
+<td>Multi-Sector Holdings</td>
+<td><a href="/wiki/Omaha,_Nebraska" title="Omaha, Nebraska">Omaha, Nebraska</a></td>
+<td>2010-02-16</td>
+<td>0001067983</td>
+<td>1839</td>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nasdaq.com/market-activity/stocks/dell">DELL</a></td>
+<td><a href="/wiki/Dell_Technologies" title="Dell Technologies">Dell Technologies</a></td>
+<td>Information Technology</td>
+<td>Technology Hardware, Storage &amp; Peripherals</td>
+<td><a href="/wiki/Round_Rock,_Texas" title="Round Rock, Texas">Round Rock, Texas</a></td>
+<td>2024-09-23</td>
+<td>0001571996</td>
+<td>1984</td>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nasdaq.com/market-activity/stocks/erie">ERIE</a></td>
+<td><a href="/wiki/Erie_Indemnity" title="Erie Indemnity">Erie Indemnity</a></td>
+<td>Financials</td>
+<td>Insurance Brokers</td>
+<td><a href="/wiki/Erie,_Pennsylvania" title="Erie, Pennsylvania">Erie, Pennsylvania</a></td>
+<td>2024-09-23</td>
+<td>0000922621</td>
+<td>1925</td>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nasdaq.com/market-activity/stocks/pltr">PLTR</a></td>
+<td><a href="/wiki/Palantir_Technologies" title="Palantir Technologies">Palantir Technologies</a></td>
+<td>Information Technology</td>
+<td>Application Software</td>
+<td><a href="/wiki/Denver,_Colorado" title="Denver, Colorado">Denver, Colorado</a></td>
+<td>2024-09-23</td>
+<td>0001321655</td>
+<td>2003</td>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nasdaq.com/market-activity/stocks/smci">SMCI</a></td>
+<td><a href="/wiki/Supermicro" title="Supermicro">Supermicro</a></td>
+<td>Information Technology</td>
+<td>Technology Hardware, Storage &amp; Peripherals</td>
+<td><a href="/wiki/San_Jose,_California" title="San Jose, California">San Jose, California</a></td>
+<td>2024-03-18</td>
+<td>0001375365</td>
+<td>1993</td>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nyse.com/quote/XNYS:DECK">DECK</a></td>
+<td><a href="/wiki/Deckers_Brands" title="Deckers Brands">Deckers Brands</a></td>
+<td>Consumer Discretionary</td>
+<td>Footwear</td>
+<td><a href="/wiki/Goleta,_California" title="Goleta, California">Goleta, California</a></td>
+<td>2024-03-18</td>
+<td>0000910521</td>
+<td>1973</td>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nasdaq.com/market-activity/stocks/tsla">TSLA</a></td>
+<td><a href="/wiki/Tesla,_Inc." title="Tesla, Inc.">Tesla, Inc.</a></td>
+<td>Consumer Discretionary</td>
+<td>Automobile Manufacturers</td>
+<td><a href="/wiki/Austin,_Texas" title="Austin, Texas">Austin, Texas</a></td>
+<td>2020-12-21</td>
+<td>0001318605</td>
+<td>2003</td>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nyse.com/quote/XNYS:UBER">UBER</a></td>
+<td><a href="/wiki/Uber" title="Uber">Uber</a></td>
+<td>Industrials</td>
+<td>Passenger Ground Transportation</td>
+<td><a href="/wiki/San_Francisco" title="San Francisco">San Francisco, California</a></td>
+<td>2023-12-18</td>
+<td>0001543151</td>
+<td>2009</td>
+</tr>
+</tbody>
+</table>
+<h2><span class="mw-headline" id="Selected_changes_to_the_list_of_S&amp;P_500_components">Selected changes to the list of S&amp;P 500 components</span></h2>
+<table class="wikitable sortable" id="changes">
+<tbody>
+<tr>
+<th rowspan="2">Date</th>
+<th colspan="2">Added</th>
+<th colspan="2">Removed</th>
+<th rowspan="2">Reason</th>
+</tr>
+<tr>
+<th>Ticker</th>
+<th>Security</th>
+<th>Ticker</th>
+<th>Security</th>
+</tr>
+<tr>
+<td rowspan="3">September 23, 2024</td>
+<td><a rel="nofollow" class="external text" href="https://www.nasdaq.com/market-activity/stocks/pltr">PLTR</a></td>
+<td><a href="/wiki/Palantir_Technologies" title="Palantir Technologies">Palantir Technologies</a></td>
+<td>AAL</td>
+<td><a href="/wiki/American_Airlines_Group" title="American Airlines Group">American Airlines Group</a></td>
+<td rowspan="3">Quarterly rebalance.<sup id="cite_ref-sep2024_1-0" class="reference"><a href="#cite_note-sep2024-1">[1]</a></sup></td>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nyse.com/quote/XNYS:DELL">DELL</a></td>
+<td><a href="/wiki/Dell_Technologies" title="Dell Technologies">Dell Technologies</a></td>
+<td>ETSY</td>
+<td><a href="/wiki/Etsy" title="Etsy">Etsy</a></td>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nasdaq.com/market-activity/stocks/erie">ERIE</a></td>
+<td><a href="/wiki/Erie_Indemnity" title="Erie Indemnity">Erie Indemnity</a><sup id="cite_ref-erie_2-0" class="reference"><a href="#cite_note-erie-2">[2]</a></sup></td>
+<td>BIO</td>
+<td><a href="/wiki/Bio-Rad_Laboratories" title="Bio-Rad Laboratories">Bio-Rad Laboratories</a></td>
+</tr>
+<tr>
+<td rowspan="2">March 18, 2024</td>
+<td><a rel="nofollow" class="external text" href="https://www.nasdaq.com/market-activity/stocks/smci">SMCI</a><sup id="cite_ref-smci_3-0" class="reference"><a href="#cite_note-smci-3">[3]</a></sup></td>
+<td><a href="/wiki/Supermicro" title="Supermicro">Supermicro</a></td>
+<td>WHR</td>
+<td><a href="/wiki/Whirlpool_Corporation" title="Whirlpool Corporation">Whirlpool Corporation</a></td>
+<td rowspan="2">Quarterly rebalance.</td>
+</tr>
+<tr>
+<td><a rel="nofollow" class="external text" href="https://www.nyse.com/quote/XNYS:DECK">DECK</a></td>
+<td><a href="/wiki/Deckers_Brands" title="Deckers Brands">Deckers Brands</a></td>
+<td>ZION</td>
+<td><a href="/wiki/Zions_Bancorporation" title="Zions Bancorporation">Zions Bancorporation</a></td>
+</tr>
+<tr>
+<td>December 18, 2023</td>
+<td><a rel="nofollow" class="external text" href="https://www.nyse.com/quote/XNYS:UBER">UBER</a></td>
+<td><a href="/wiki/Uber" title="Uber">Uber</a></td>
+<td></td>
+<td></td>
+<td>Quarterly rebalance.</td>
+</tr>
+<tr>
+<td>May 4, 2023</td>
+<td></td>
+<td></td>
+<td>FRC</td>
+<td><a href="/wiki/First_Republic_Bank" title="First Republic Bank">First Republic Bank</a></td>
+<td>Bank failure; acquired by JPMorgan Chase.<sup id="cite_ref-frc_4-0" class="reference"><a href="#cite_note-frc-4">[4]</a></sup></td>
+</tr>
+<tr>
+<td>March 15, 2023</td>
+<td></td>
+<td></td>
+<td>SIVB</td>
+<td><a href="/wiki/SVB_Financial_Group" title="SVB Financial Group">SVB Financial Group</a></td>
+<td>Bank failure.</td>
+</tr>
+<tr>
+<td>December 21, 2020</td>
+<td><a rel="nofollow" class="external text" href="https://www.nasdaq.com/market-activity/stocks/tsla">TSLA</a></td>
+<td><a href="/wiki/Tesla,_Inc." title="Tesla, Inc.">Tesla, Inc.</a></td>
+<td>AIV</td>
+<td><a href="/wiki/Apartment_Investment_and_Management_Company" title="Aimco">Apartment Investment &amp; Management</a></td>
+<td>Market capitalization change.<sup id="cite_ref-tsla_5-0" class="reference"><a href="#cite_note-tsla-5">[5]</a></sup></td>
+</tr>
+</tbody>
+</table>
+<div class="reflist">
+<ol class="references">
+<li id="cite_note-sep2024-1">S&amp;P Dow Jones Indices press release, September 6, 2024.</li>
+<li id="cite_note-erie-2">Erie Indemnity Class A.</li>
+<li id="cite_note-smci-3">S&amp;P Dow Jones Indices press release, March 1, 2024.</li>
+<li id="cite_note-frc-4">S&amp;P Dow Jones Indices press release, May 2, 2023.</li>
+<li id="cite_note-tsla-5">S&amp;P Dow Jones Indices press release, November 16, 2020.</li>
+</ol>
+</div>
+</div>
+</body>
+</html>

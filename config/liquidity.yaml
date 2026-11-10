@@ -8,7 +8,7 @@ tsx:
   mdtv_window: 63
   max_zero_volume_days: 3
   max_stale_sessions: 5
-  min_history_sessions: 273
+  min_history_sessions: 274
 us:
   min_mdtv: 25_000_000
   min_market_cap: 5_000_000_000
@@ -16,4 +16,4 @@ us:
   mdtv_window: 63
   max_zero_volume_days: 3
   max_stale_sessions: 5
-  min_history_sessions: 273
+  min_history_sessions: 274

@@ -15,6 +15,33 @@ DISCLAIMER = ("Screening-signal backtest for model validation only; not investme
               "Results are a survivor-biased upper bound where removed index members lack prices.")
 
 
+def _params_hash() -> str:
+    from ..models.frozen import FROZEN_V2, params_sha256
+
+    return params_sha256(FROZEN_V2)
+
+
+def _write_holdout_result(path: Path, run_id: str, params_hash: str, results: dict,
+                          report_path: Path) -> None:
+    """docs/qa/holdout_v2.md (freeze §4.4); its existence blocks any further holdout run."""
+    from ..engine import _git_sha
+    from . import report as rep
+
+    L = ["# Holdout v2 result (one-shot run)", "", DISCLAIMER, "",
+         f"Run `{run_id}`, git `{_git_sha()}`, params SHA-256 `{params_hash}`, thresholds hash "
+         f"`{bte.thresholds_hash()}`. Full report: `{report_path}`.", "",
+         "| Model | Verdict | Failed legs | Incomplete legs |", "|---|---|---|---|"]
+    for model in ("A", "C", "H", "B"):
+        p = results[model]["pass"]
+        verdict = (f"{p.result} (diagnostic, not counted)" if model in rep.DIAGNOSTIC_MODELS
+                   else p.result)
+        L.append(f"| {model} | {verdict} | {', '.join(p.failed_legs) or '-'} | "
+                 f"{', '.join(p.incomplete_legs) or '-'} |")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(L) + "\n")
+    print(f"-> {path}")
+
+
 def backtest_cmd(args) -> int:
     bt_path = Path(args.bt_db)
     if args.action == "build":
@@ -40,8 +67,36 @@ def backtest_cmd(args) -> int:
         print("\n".join(f"{k}: {c} bars {a} .. {b}" for k, c, a, b in n), errs or "")
         return 0
 
-    con = runner.connect_bt(bt_path)
-    dates = bte.rebalance_dates(bte.BT_START, args.today)
+    holdout = bool(getattr(args, "holdout", False))
+    params_hash = None
+    if holdout:  # one-shot guard BEFORE any computation (revision_v2_freeze.md §3-§4)
+        from .holdout import HoldoutRefused, check_holdout_guard
+
+        if args.universe != "US":
+            print("REFUSED: the holdout run is US only (revision_v2_freeze.md §4)")
+            return 2
+        if not getattr(args, "freeze", None):
+            print("REFUSED: --holdout needs --freeze <freeze doc> (one-shot guarded run)")
+            return 2
+        con = runner.connect_bt(bt_path)
+        try:
+            params_hash = check_holdout_guard(args.freeze, args.result, con)
+        except HoldoutRefused as e:
+            con.close()
+            print(f"REFUSED: {e}")
+            return 2
+        if args.action == "report":
+            print("REFUSED: use `backtest run --holdout --freeze ...`: the holdout runs and "
+                  "reports in one shot")
+            con.close()
+            return 2
+    else:
+        con = runner.connect_bt(bt_path)
+    all_dates = bte.rebalance_dates(bte.BT_START, args.today)
+    # Without --holdout the US run never touches the last HOLDOUT_N month-ends: no signals,
+    # no forward returns, no metrics for them.
+    dates = (all_dates if holdout or args.universe == "TSX"
+             else bte.in_sample_dates(all_dates))
     if args.action == "run":
         t0 = time.time()
         members = runner.members_by_date(con, args.universe, dates)
@@ -60,17 +115,23 @@ def backtest_cmd(args) -> int:
                                if args.universe == "TSX" else None)
         print(f"[{args.universe}] ran {res['ran']} dates in {res['seconds']:.0f}s; "
               f"{n_ret} forward-return rows; total {time.time() - t0:.0f}s")
-        return 0
+        if not holdout:
+            return 0
+        con = runner.connect_bt(bt_path)
 
     # report
-    ins = bte.in_sample_dates(dates)
-    ho = bte.holdout_dates(dates) if args.holdout else None
+    ins = bte.in_sample_dates(all_dates)
+    ho = bte.holdout_dates(all_dates) if holdout else None
     if args.universe == "TSX":  # TSX: short recent history; reported pooled, never in the bar
         ins, ho = sorted(set(dates)), None
     kind = "holdout" if ho else "in_sample"
     run_id = bte.log_run(con, kind, args.universe, args.today, len(dates))
     rows = rep.load_rows(con, args.universe)
     fwd = rep.load_returns(con)
+    if not ho and args.universe == "US":  # in-sample report: holdout dates never loaded
+        keep = set(ins)
+        rows = rows[rows["date"].isin(keep)].reset_index(drop=True)
+        fwd = fwd[fwd["date"].isin(keep)].reset_index(drop=True)
     have = sorted(set(rows["date"]))
     ins = [d for d in ins if d in set(have)]
     ho = [d for d in ho if d in set(have)] if ho else None
@@ -81,7 +142,8 @@ def backtest_cmd(args) -> int:
         res = rep.model_metrics(rows, fwd, model, ins, ho)
         results[model] = res
         h12 = res["in"]["h"][12]
-        print(f"{name}: {res['pass'].result} failed={res['pass'].failed_legs} "
+        tag = " [diagnostic, not a verdict]" if model in rep.DIAGNOSTIC_MODELS else ""
+        print(f"{name}{tag}: {res['pass'].result} failed={res['pass'].failed_legs} "
               f"incomplete={res['pass'].incomplete_legs} IC12 {h12['ic_mean']:.4f} "
               f"t {h12['ic_t']:.2f} spread12 {h12['mean_spread']:.4f}")
     diag = rep.diagnostics(results["A"]["obs"], results["B"]["obs"], rows, ins)
@@ -91,7 +153,8 @@ def backtest_cmd(args) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     parts = [f"# Backtest results ({args.universe}, {label})", "", DISCLAIMER, "",
-             f"Run `{run_id}` ({kind}), thresholds hash `{bte.thresholds_hash()[:16]}`. "
+             f"Run `{run_id}` ({kind}), thresholds hash `{bte.thresholds_hash()[:16]}`, "
+             f"params hash (freeze §2) `{_params_hash()[:16]}`. "
              f"In-sample dates: {ins[0] if ins else '-'} .. {ins[-1] if ins else '-'} "
              f"({len(ins)}); holdout: "
              + (f"{ho[0]} .. {ho[-1]} ({len(ho)})" if ho else "locked (not computed)"), ""]
@@ -112,6 +175,8 @@ def backtest_cmd(args) -> int:
               "## Survivorship", "", "```", json.dumps(sv, indent=1, default=str), "```"]
     path = out / f"backtest_{args.universe}_{run_id}.md"
     path.write_text("\n".join(parts) + "\n")
+    if ho:
+        _write_holdout_result(Path(args.result), run_id, params_hash, results, path)
     print(json.dumps(sv, default=str))
     print(f"-> {path}")
     return 0

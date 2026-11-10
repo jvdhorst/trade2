@@ -17,14 +17,22 @@ import pandas as pd
 from . import engine as bte
 from . import metrics as m
 
-MODELS = {"A": "Model A (residual income)", "B": "Model B (P/B ~ ROE)",
+MODELS = {"A": "Model A (residual income, model label incl. SELL)",
+          "B": "Model B (P/B ~ ROE), DIAGNOSTIC ONLY: pass line printed, never a verdict",
           "A_BOOK": "Model A restricted to book sectors",
           "BASELINE_PB": "Baseline: low P/B buckets (book sectors)",
           "C": "Model C (value-quality-momentum-risk composite)",
           "C_V": "Model C factor V (value), diagnostic",
           "C_Q": "Model C factor Q (quality), diagnostic",
           "C_M": "Model C factor M (momentum 12-1), diagnostic",
-          "C_R": "Model C factor R (low volatility), diagnostic"}
+          "C_R": "Model C factor R (low volatility), diagnostic",
+          "H": "Model H (shareholder yield)",
+          "H_BBY": "Model H part BBY (net buyback yield), diagnostic: IC only",
+          "H_DY": "Model H part DY (dividend yield), diagnostic: IC only"}
+DIAGNOSTIC_MODELS = frozenset({"B", "A_BOOK", "BASELINE_PB", "C_V", "C_Q", "C_M", "C_R",
+                               "H_BBY", "H_DY"})
+# Model H parts (freeze §3): IC only, so every scored name gets the neutral label HOLD
+H_PARTS = {"H_BBY": "h_bby", "H_DY": "h_dy"}
 # Model C diagnostic factors (composite.md, Data mapping / Backtest): label column, score column.
 C_FACTORS = {"C_V": ("c_v_label", "c_value"), "C_Q": ("c_q_label", "c_quality"),
              "C_M": ("c_m_label", "c_momentum"), "C_R": ("c_r_label", "c_risk")}
@@ -98,6 +106,13 @@ def model_panel(rows: pd.DataFrame, model: str) -> pd.DataFrame:
         lab, sc = C_FACTORS[model]
         x["label"] = rows[lab].fillna("NO_SIGNAL").to_numpy()
         x["score"] = np.where(rows[lab].notna(), rows[sc], np.nan)
+    elif model == "H":
+        x["label"] = rows["h_signal"].fillna("NO_SIGNAL").to_numpy()
+        x["score"] = np.where(rows["h_signal"].isin(m.SIGNALS), rows["h_score"], np.nan)
+    elif model in H_PARTS:
+        ok = rows["h_signal"].isin(m.SIGNALS) & rows[H_PARTS[model]].notna()
+        x["label"] = np.where(ok, "HOLD", "NO_SIGNAL")
+        x["score"] = np.where(ok, rows[H_PARTS[model]], np.nan)
     else:
         raise ValueError(model)
     return x

@@ -1,4 +1,4 @@
-"""Model A: residual income value. Spec: docs/models/residual_income.md (v0.1.0).
+"""Model A: residual income value. Spec: docs/models/residual_income.md (v0.2.0).
 
 Screening signal only, not investment advice. Labels: BUY / HOLD / SELL / NO_SIGNAL / NOT_ELIGIBLE.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-MODEL_VERSION = "residual_income/0.1.0"
+MODEL_VERSION = "residual_income/0.2.0"
 
 ERP = 0.05
 HORIZON = 10
@@ -17,10 +17,13 @@ ROE_CAP = 0.35
 RETENTION_DEFAULT = 0.6
 G_CAP = 0.04
 R_SHIFT = 0.01
+DOMINANT_SHARE = 0.5  # v0.2.0: one quarter > half of a positive TTM NI is a one-off
 BUY_MOS = 0.25
 SELL_MOS = -0.20
 PB_MAX = 8.0
 PB_MAX_ASSET_LIGHT = 3.0
+BUY_BLOCKED_IF_ROE_CLIPPED = True  # v0.2.0 (R2)
+SELL_SHOWN_AS = "HOLD"  # v0.2.0 (R1): screen_signal for a model SELL
 
 BOOK_SECTORS = frozenset({"Financials", "Utilities", "Real Estate", "Energy", "Materials"})
 CYCLICAL_SECTORS = frozenset({"Energy", "Materials"})
@@ -39,6 +42,9 @@ FAIR_VALUE_BOOK = "FAIR_VALUE_BOOK"
 CSM_ADJUSTED = "CSM_ADJUSTED"
 PIT_ESTIMATED = "PIT_ESTIMATED"
 NO_TTM = "NO_TTM"
+ONE_OFF_QUARTER = "ONE_OFF_QUARTER"
+BUY_BLOCKED_CLIP = "BUY_BLOCKED_CLIP"
+SELL_ZONE = "SELL_ZONE"
 
 
 @dataclass(frozen=True)
@@ -65,6 +71,7 @@ class RIInputs:
     csm_after_tax: float | None = None
     ni_currency: str | None = None
     reporting_currency: str | None = None
+    ni_quarters: tuple | None = None  # v0.2.0: the 4 quarterly NI values behind ni_common_ttm
 
 
 @dataclass(frozen=True)
@@ -92,6 +99,10 @@ class RIResult:
     mos_down: float | None
     justified_pb: float | None
     flags: frozenset[str]
+    screen_signal: str | None = None  # v0.2.0: what the screen shows (SELL -> HOLD)
+    ni_norm: float | None = None
+    roe_norm: float | None = None
+    one_off: bool = False
 
 
 def roe_raw(ni: float | None, ce_end: float | None,
@@ -145,6 +156,17 @@ def map_signal(mos: float, mos_up: float, mos_down: float) -> str:
     return HOLD
 
 
+def one_off_quarter(ni: float | None, quarters) -> tuple[bool, float | None]:
+    """v0.2.0 dominant-quarter rule: (one_off, ni_norm)."""
+    if ni is None:
+        return False, None
+    q = None if quarters is None else list(quarters)
+    if (ni > 0 and q is not None and len(q) == 4 and all(x is not None for x in q)
+            and max(q) > DOMINANT_SHARE * ni):
+        return True, (ni - max(q)) * 4 / 3
+    return False, ni
+
+
 def evaluate(inp: RIInputs) -> RIResult:
     if inp.price is None or inp.price <= 0:
         raise ValueError(f"{inp.ticker}: price must be > 0")
@@ -176,22 +198,29 @@ def evaluate(inp: RIInputs) -> RIResult:
         b0 = inp.bvps
     pb = inp.price / b0 if b0 is not None and b0 > 0 else None
 
+    one_off, ni_norm = one_off_quarter(ni, inp.ni_quarters)
     if csm_missing:
         r_raw, rflags = None, frozenset()
+        r_norm = None
     else:
         ce_end = None if inp.common_equity_end is None else inp.common_equity_end + add
         ce_start = None if inp.common_equity_start is None else inp.common_equity_start + add
         r_raw, rflags = roe_raw(ni, ce_end, ce_start)
+        r_norm = roe_raw(ni_norm, ce_end, ce_start)[0] if one_off else r_raw
+        if r_raw is None:
+            r_norm = None
     flags |= rflags
+    if one_off:
+        flags.add(ONE_OFF_QUARTER)
 
     cyclical = inp.sector in CYCLICAL_SECTORS
     if cyclical:
         flags.add(CYCLICAL_ROE)
     h = inp.roe_history
-    roe_base, basis = r_raw, (None if r_raw is None else "ttm")
-    if (r_raw is not None and cyclical and len(h) >= 2
+    roe_base, basis = r_norm, (None if r_norm is None else "ttm")
+    if (r_norm is not None and cyclical and len(h) >= 2
             and h[0] is not None and h[1] is not None):
-        roe_base, basis = (r_raw + h[0] + h[1]) / 3, "3y_avg"
+        roe_base, basis = (r_norm + h[0] + h[1]) / 3, "3y_avg"
     roe0 = None
     if roe_base is not None:
         roe0, clipped = clip_roe(roe_base)
@@ -240,11 +269,19 @@ def evaluate(inp: RIInputs) -> RIResult:
             signal = NO_SIGNAL
         else:
             signal = map_signal(mos, mos_up, mos_dn)
+            if signal == BUY and ROE_CLIPPED in flags and BUY_BLOCKED_IF_ROE_CLIPPED:
+                signal = HOLD
+                flags.add(BUY_BLOCKED_CLIP)
+    screen = signal
+    if signal == SELL:
+        screen = SELL_SHOWN_AS
+        flags.add(SELL_ZONE)
 
     return RIResult(
         ticker=inp.ticker, as_of=inp.as_of, market=inp.market, sector=inp.sector,
         price=inp.price, signal=signal, no_signal_reason=reason, roe_raw=r_raw, roe0=roe0,
         roe_basis=basis, r=r, b=b, eps_ttm=eps, b0=b0, pb=pb, v_ri=v, mos=mos, v_ri_up=v_up,
         mos_up=mos_up, v_ri_down=v_dn, mos_down=mos_dn, justified_pb=jpb,
-        flags=frozenset(flags),
+        flags=frozenset(flags), screen_signal=screen, ni_norm=ni_norm, roe_norm=r_norm,
+        one_off=one_off,
     )

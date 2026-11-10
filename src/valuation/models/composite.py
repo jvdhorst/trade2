@@ -1,4 +1,4 @@
-"""Model C: value-quality-momentum-risk composite. Spec: docs/models/composite.md (v0.1.0).
+"""Model C: value-quality-momentum-risk composite. Spec: docs/models/composite.md (v0.2.0).
 
 Screening signal only (BUY / HOLD / SELL sorts the queue for human review); not investment advice.
 Pure functions: the engine builds point-in-time `CompositeInputs` (facts filed <= as_of, prices
@@ -15,7 +15,7 @@ from datetime import date
 import numpy as np
 from scipy.stats import rankdata
 
-MODEL_VERSION = "composite/0.1.0"
+MODEL_VERSION = "composite/0.2.0"
 WINSOR = (0.05, 0.95)
 MIN_SECTOR_NAMES = 5
 MIN_FACTORS = 3
@@ -28,6 +28,13 @@ VOL_WINDOW = 252
 ANNUALIZE = 252
 STD_EPS = 1e-12
 FINANCIALS = "Financials"
+# v0.2.0: B/P only where book measures invested capital (same set as Models A and B)
+BOOK_SECTORS = frozenset({"Financials", "Utilities", "Real Estate", "Energy", "Materials"})
+MARKETS = ("TSX", "US")  # v0.2.0: steps 1-5 run separately per market
+# structural switches recorded in the frozen parameter set (revision_v2_freeze.md §2)
+BP_SECTORS = "BOOK_SECTORS"
+CROSS_SECTION = "per_market"
+WEIGHTS = "equal"
 FACTORS = {"value": ("ep", "bp", "fcfp"),
            "quality": ("roe", "gpa", "neg_accruals", "neg_leverage"),
            "momentum": ("mom",),
@@ -42,6 +49,7 @@ class CompositeInputs:
     sector: str | None
     eligible: bool | None
     history_ok: bool | None
+    market: str = "US"
     price: float | None = None
     market_cap: float | None = None
     fx_rate: float = 1.0
@@ -63,6 +71,8 @@ class CompositeInputs:
     def __post_init__(self):
         if self.fx_rate is None or not self.fx_rate > 0:
             raise ValueError(f"{self.ticker}: fx_rate must be > 0")
+        if self.market not in MARKETS:
+            raise ValueError(f"{self.ticker}: market must be TSX or US, got {self.market!r}")
 
 
 @dataclass(frozen=True)
@@ -75,8 +85,8 @@ class SectorStat:
 
 @dataclass(frozen=True)
 class CompositeStats:
-    bounds: dict[str, tuple[float, float]]
-    sectors: dict[tuple[str, str], SectorStat]
+    bounds: dict[tuple[str, str], tuple[float, float]]  # (market, metric)
+    sectors: dict[tuple[str, str, str], SectorStat]  # (market, sector, metric)
 
 
 @dataclass(frozen=True)
@@ -137,7 +147,8 @@ def raw_metrics(inp: CompositeInputs) -> tuple[dict[str, float | None], frozense
     out: dict[str, float | None] = dict.fromkeys(METRICS)
     if inp.ni_ttm is not None and cap is not None:
         out["ep"] = inp.ni_ttm / cap
-    if inp.bvps is not None and inp.price is not None and inp.price > 0:
+    if (inp.sector in BOOK_SECTORS and inp.bvps is not None and inp.price is not None
+            and inp.price > 0):
         out["bp"] = inp.bvps / inp.price
     out["roe"] = inp.roe
     out["mom"] = inp.mom
@@ -218,47 +229,54 @@ def run_composite(inputs: Sequence[CompositeInputs], min_sector_names: int = MIN
     in_u = {i.ticker: (i.eligible is True and i.history_ok is True and bool(i.sector))
             for i in inputs}
     U = [i for i in inputs if in_u[i.ticker]]
-
-    # 1. pooled winsorizing per metric
-    bounds: dict[str, tuple[float, float]] = {}
+    bounds: dict[tuple[str, str], tuple[float, float]] = {}
+    sectors: dict[tuple[str, str, str], SectorStat] = {}
     wins: dict[str, dict[str, float]] = {i.ticker: {} for i in U}
-    for m in METRICS:
-        vals = [(i.ticker, raw[i.ticker][0][m]) for i in U if raw[i.ticker][0][m] is not None]
-        if not vals:
-            continue
-        lo, hi = winsor_bounds([v for _, v in vals])
-        bounds[m] = (lo, hi)
-        for t, v in vals:
-            wins[t][m] = min(max(v, lo), hi)
-
-    # 2. sector z-scores
-    sectors: dict[tuple[str, str], SectorStat] = {}
     zs: dict[str, dict[str, float]] = {i.ticker: {} for i in U}
-    for s in sorted({i.sector for i in U}):
-        names = [i.ticker for i in U if i.sector == s]
-        for m in METRICS:
-            g = [t for t in names if m in wins[t]]
-            if not g:
-                continue
-            mean, std, z = sector_zscores([wins[t][m] for t in g], min_sector_names)
-            sectors[(s, m)] = SectorStat(len(g), mean, std, z is not None)
-            if z is not None:
-                for t, v in zip(g, z, strict=True):
-                    zs[t][m] = v
-
-    # 3-4. factors and S
     fac: dict[str, dict[str, float | None]] = {}
     score: dict[str, float | None] = {}
-    for i in U:
-        t = i.ticker
-        fac[t] = {k: _mean([zs[t][m] for m in ms if m in zs[t]]) for k, ms in FACTORS.items()}
-        avail = [v for v in fac[t].values() if v is not None]
-        score[t] = _mean(avail) if len(avail) >= MIN_FACTORS else None
-
-    # 5. percentiles
-    pct = pct_rank({t: s for t, s in score.items() if s is not None})
-    mom_pct = pct_rank({i.ticker: i.mom for i in U if i.mom is not None})
-    fpct = {k: pct_rank({t: f[k] for t, f in fac.items() if f[k] is not None}) for k in FACTORS}
+    pct: dict[str, float | None] = {}
+    mom_pct: dict[str, float | None] = {}
+    fpct: dict[str, dict[str, float | None]] = {k: {} for k in FACTORS}
+    for mkt in MARKETS:  # v0.2.0: markets never influence each other
+        Um = [i for i in U if i.market == mkt]
+        if not Um:
+            continue
+        # 1. winsorizing per metric within the market
+        for m in METRICS:
+            vals = [(i.ticker, raw[i.ticker][0][m]) for i in Um
+                    if raw[i.ticker][0][m] is not None]
+            if not vals:
+                continue
+            lo, hi = winsor_bounds([v for _, v in vals])
+            bounds[(mkt, m)] = (lo, hi)
+            for t, v in vals:
+                wins[t][m] = min(max(v, lo), hi)
+        # 2. z-scores per (market, sector)
+        for s in sorted({i.sector for i in Um}):
+            names = [i.ticker for i in Um if i.sector == s]
+            for m in METRICS:
+                g = [t for t in names if m in wins[t]]
+                if not g:
+                    continue
+                mean, std, z = sector_zscores([wins[t][m] for t in g], min_sector_names)
+                sectors[(mkt, s, m)] = SectorStat(len(g), mean, std, z is not None)
+                if z is not None:
+                    for t, v in zip(g, z, strict=True):
+                        zs[t][m] = v
+        # 3-4. factors and S
+        for i in Um:
+            t = i.ticker
+            fac[t] = {k: _mean([zs[t][m] for m in ms if m in zs[t]])
+                      for k, ms in FACTORS.items()}
+            avail = [v for v in fac[t].values() if v is not None]
+            score[t] = _mean(avail) if len(avail) >= MIN_FACTORS else None
+        # 5. percentiles within the market
+        mt = [i.ticker for i in Um]
+        pct.update(pct_rank({t: score[t] for t in mt if score[t] is not None}))
+        mom_pct.update(pct_rank({i.ticker: i.mom for i in Um if i.mom is not None}))
+        for k in FACTORS:
+            fpct[k].update(pct_rank({t: fac[t][k] for t in mt if fac[t][k] is not None}))
 
     results = []
     for i in inputs:

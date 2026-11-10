@@ -52,7 +52,12 @@ def main(argv: list[str] | None = None) -> int:
     pb.add_argument("--workers", type=int, default=4)
     pb.add_argument("--today", type=date.fromisoformat, default=date.today())
     pb.add_argument("--holdout", action="store_true",
-                    help="also compute holdout metrics (frozen thresholds; logged in bt_runs)")
+                    help="ONE-SHOT holdout run (needs --freeze; refused if the parameter hash "
+                         "differs or a holdout result already exists)")
+    pb.add_argument("--freeze", default=None,
+                    help="freeze doc whose stated SHA-256 must match the code's parameters")
+    pb.add_argument("--result", default="docs/qa/holdout_v2.md",
+                    help="holdout result file; its existence blocks another holdout run")
     pb.add_argument("--out", default="reports/backtest")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")

@@ -177,39 +177,63 @@ def _nan_none(v):
     return None if isinstance(v, float) and v != v else v
 
 
+def _part_dir(db_path: str, universe: str):
+    from pathlib import Path
+
+    d = Path(db_path).parent / "backtest_parts" / universe
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def run_backtest(db_path: str, universe: str, members_by_date: dict[date, list[str]],
                  workers: int = 4, csm_path=None, log=print) -> dict:
-    """Run every date not yet stored for `universe`. members_by_date: date -> tickers with data."""
+    """Run every date not yet done for `universe`, then load all dates into bt_rows.
+
+    Workers read the DB through a read-only attach, so finished dates go to one JSON file each
+    (`data/backtest_parts/<universe>/<date>.json`: resumable) and are loaded into the DB after
+    the pool has shut down."""
+    parts = _part_dir(db_path, universe)
+    todo = sorted(d for d in members_by_date if not (parts / f"{d.isoformat()}.json").exists())
+    log(f"[{universe}] {len(todo)} dates to run ({len(members_by_date) - len(todo)} cached)")
+    t_start = time.time()
+    if todo:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(run_one, db_path, d, sorted(members_by_date[d]), csm_path): d
+                    for d in todo}
+            for f in futs:
+                d, rows, secs = f.result()
+                payload = {"date": d.isoformat(), "seconds": secs,
+                           "n_members": len(members_by_date[d]),
+                           "rows": [[_nan_none(v) for v in r] for r in rows]}
+                tmp = parts / f"{d.isoformat()}.json.tmp"
+                tmp.write_text(json.dumps(payload, default=str))
+                tmp.rename(parts / f"{d.isoformat()}.json")
+                log(f"[{universe}] {d}: {len(rows)} names, {secs:.1f}s")
+    ran = time.time() - t_start
     con = duckdb.connect(db_path)
     for ddl in BT_DDL:
         con.execute(ddl)
-    done = {r[0] for r in con.execute("SELECT date FROM bt_dates WHERE universe=?",
-                                      [universe]).fetchall()}
-    todo = sorted(d for d in members_by_date if d not in done)
+    con.execute("DELETE FROM bt_rows WHERE universe=?", [universe])
+    con.execute("DELETE FROM bt_dates WHERE universe=?", [universe])
+    recs, dates = [], []
+    for d in sorted(members_by_date):
+        p = parts / f"{d.isoformat()}.json"
+        payload = json.loads(p.read_text())
+        recs += [[universe, d, *r] for r in payload["rows"]]
+        dates.append([universe, d, payload["n_members"], len(payload["rows"]),
+                      payload["seconds"]])
+    cols = ["universe", "date", "ticker", "market", "sector", "eligible", "elig_fail_reason",
+            "price", "bvps", "pb", "roe0", "roe_raw", "a_signal", "a_reason", "a_mos",
+            "b_signal", "b_reason", "b_residual", "b_resid_pct", "b_upside", "b_n_fit", "b_r2",
+            "flags"]
+    df = pd.DataFrame(recs, columns=cols)
+    con.register("_df", df)
+    con.execute("INSERT INTO bt_rows SELECT * FROM _df")
+    con.unregister("_df")
+    con.executemany("INSERT INTO bt_dates VALUES (?,?,?,?,?)", dates)
     con.close()
-    log(f"[{universe}] {len(todo)} dates to run ({len(done)} already stored)")
-    t_start = time.time()
-    results = {}
-    if not todo:
-        return {"ran": 0, "seconds": 0.0}
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        futs = [ex.submit(run_one, db_path, d, sorted(members_by_date[d]), csm_path) for d in todo]
-        for f in futs:
-            d, rows, secs = f.result()
-            con = duckdb.connect(db_path)
-            con.execute("BEGIN")
-            con.execute("DELETE FROM bt_rows WHERE universe=? AND date=?", [universe, d])
-            if rows:
-                con.executemany(
-                    "INSERT INTO bt_rows VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    [[universe, d, *[_nan_none(v) for v in r]] for r in rows])
-            con.execute("INSERT OR REPLACE INTO bt_dates VALUES (?,?,?,?,?)",
-                        [universe, d, len(members_by_date[d]), len(rows), secs])
-            con.execute("COMMIT")
-            con.close()
-            results[d] = secs
-            log(f"[{universe}] {d}: {len(rows)} names, {secs:.1f}s")
-    return {"ran": len(results), "seconds": time.time() - t_start}
+    return {"ran": len(todo), "seconds": ran,
+            "cpu_seconds": sum(r[4] for r in dates)}
 
 
 def load_signals(con, universe: str) -> pd.DataFrame:

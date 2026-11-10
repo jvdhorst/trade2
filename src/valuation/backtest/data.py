@@ -68,22 +68,22 @@ def as_traded(bars: list[PriceBar], divs: list[Dividend], splits: list[tuple[dat
     return out_b, out_d
 
 
-def check_symbol(bars: list[PriceBar], intervals: list[mem.Interval]) -> str | None:
-    """None if the price series plausibly belongs to the index member; else a reason code.
-
-    A symbol Yahoo now uses for another company typically has no bars inside the old membership
-    window (e.g. reused after a delisting)."""
-    if not bars:
-        return "NO_PRICE"
-    dates = [b.date for b in bars]
+def interval_validity(bars: list[PriceBar], intervals: list[mem.Interval],
+                      today: date) -> list[tuple[mem.Interval, bool]]:
+    """Spec §5: an interval is valid if the symbol has >= 1 bar inside [start, end or today].
+    An interval without bars (delisted, or the symbol now belongs to another company that
+    listed later) contributes missing-price member-dates only; other intervals stay usable."""
+    dates = sorted(b.date for b in bars)
+    out = []
     for iv in intervals:
-        lo, hi = max(iv.start, PRICE_START), iv.end or date.max
-        inside = [d for d in dates if lo <= d <= hi]
-        if not inside:
-            return "NO_BARS_IN_MEMBERSHIP"
-        if (inside[0] - lo).days > 31:
-            return "STARTS_AFTER_MEMBERSHIP"
-    return None
+        hi = iv.end or today
+        out.append((iv, any(iv.start <= d <= hi for d in dates)))
+    return out
+
+
+INTERVAL_DDL = """CREATE TABLE IF NOT EXISTS bt_interval_coverage (
+    ticker VARCHAR, start_date DATE, end_date DATE, valid BOOLEAN,
+    PRIMARY KEY (ticker, start_date))"""
 
 
 # ---------- SIC -> GICS sector (coarse, removed names only) ----------
@@ -152,6 +152,12 @@ def name_index(frames: list[dict]) -> dict[str, set[str]]:
             idx.setdefault(norm_name(d.get("entityName")), set()).add(str(d["cik"]).zfill(10))
     idx.pop("", None)
     return idx
+
+
+def ticker_matches(sub: dict, ticker: str) -> bool:
+    """A name-matched CIK is accepted only if EDGAR lists the ticker for that filer (guards
+    against a same-name successor, e.g. 'CONSOL Energy' -> the 2017 spin-off, not CNX)."""
+    return ticker in {str(x).upper().replace(".", "-") for x in (sub.get("tickers") or [])}
 
 
 def match_cik(name: str | None, idx: dict[str, set[str]]) -> str | None:

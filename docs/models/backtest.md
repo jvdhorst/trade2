@@ -43,12 +43,14 @@ Page order is kept.
    - `x ∈ A \ R`: if x is open → emit `Interval(x, D, open.pop(x))`; else skip (inconsistent row, logged).
    - `y ∈ R \ A`: if y is not open → `open[y] = D − 1 day`; else skip (logged).
    - `z ∈ A ∩ R` (same-day add and remove of the same ticker): if z is open → nothing (no gap); else `open[z] = D − 1 day`.
-3. After the walk: every still-open ticker gets `Interval(t, start, end)`.
-4. Merge intervals of one ticker that touch (`next.start == prev.end + 1 day`); sort by `(ticker, start)`.
+3. After the walk: every still-open ticker gets `Interval(t, start, end)`, unless `end < start` (a removal dated
+   exactly `start`), which yields no interval.
+4. Merge intervals of one ticker that touch (`next.start == prev.end + 1 day`); sort by `(ticker, start)`. (A safety
+   net: with the same-day rule in step 2 the walk cannot produce touching intervals; QA tests the property.)
 
 `members_on(intervals, d) -> set[str]` = `{i.ticker : i.start <= d and (i.end is None or d <= i.end)}`.
 Storage: DuckDB `index_membership(index_name, ticker, name, start_date, end_date, source, fetched_on)`, one row per
-interval, `index_name = 'SP500'`, `source = 'wikipedia:List_of_S&P_500_companies'`, `end_date` NULL when open, `name`
+interval, `index_name = 'SP500'`, `source = 'wikipedia:List_of_S&P_500_companies + wikipedia:Historical_components_of_the_S&P_500'` (the changes table moved to its own article on 2026-08-11), `end_date` NULL when open, `name`
 from the latest change row or current table naming the ticker. The page is fetched (cached to `data/raw`) by the
 existing Wikipedia path.
 
@@ -77,7 +79,8 @@ Returns realised after 2023-10-31 do enter in-sample 12-month returns (the lock 
   at the open of `date`). Yahoo split-adjusts `close`, `volume` and dividend amounts to the download date, so the
   backtest DB (`data/backtest.duckdb`) stores them **as traded**: at ingest, with `F(t)` = product of ratios of splits
   dated after t, `close = close_yahoo × F(t)`, `volume = volume_yahoo / F(t)`, `amount = amount_yahoo × F(ex_date)`;
-  `adj_close` is kept as delivered. On date d: `shares_d = shares_filing × Π ratio (split date in (filed_date, d])`;
+  `adj_close` is kept as delivered. On date d: `shares_d = shares_filing × Π ratio (split date in (filed_date, p])` with p = the price date used on d
+  (the last bar ≤ d, so shares and price share one basis; equals d when d has a bar);
   a dividend on the d basis = `amount / Π ratio (split date in (ex_date, d])` (**divided**: more shares, less per share).
   Example: split 4.0 on 2020-08-31; filing filed 2020-07-30 with 1.0e9 shares; Yahoo close 125 on 2020-08-28 (as traded
   500); Yahoo dividend 0.205 ex 2020-08-07 (as traded 0.82). d = 2020-08-30 → shares 1.0e9, price 500, dividend 0.82,
@@ -345,4 +348,6 @@ tuple[str, ...], incomplete_legs: tuple[str, ...])`. Frames carry exactly the co
   an extra public helper. TSX results never enter the pass bar.
 
 ## Changelog
+- **0.1.1:** QA review: removal dated exactly `start` yields no interval; split window ends at the price date;
+  the merge step is a safety net. Changes table source moved to *Historical components of the S&P 500* (2026-08-11).
 - **0.1.0:** initial version (P8-0). Golden values computed with numpy/pandas/scipy (`rankdata`, `spearmanr` agree).

@@ -101,18 +101,28 @@ def build(bt_path: Path, changes_html: str, current_html: str, sp_csv: str,
     log.info("membership: %d intervals, %d distinct US tickers since 2013", len(intervals), len(us))
 
     prices = btd.fetch_prices(yp, us + sorted(tsx), today, workers)
-    cov, keep = {}, {}
+    cov, keep, iv_rows = {}, {}, []
     for t in us + sorted(tsx):
         bars, divs, splits, err = prices[t]
         reason = ("FETCH_ERROR: " + err) if err else None
+        if not err and not bars:
+            reason = "NO_PRICE"
         if not err and t in by_ticker:
-            reason = btd.check_symbol(bars, by_ticker[t])
+            validity = btd.interval_validity(bars, by_ticker[t], today)
+            iv_rows += [[t, iv.start, iv.end, ok] for iv, ok in validity]
+            if not any(ok for _, ok in validity):
+                reason = reason or "NO_BARS_IN_MEMBERSHIP"
+        elif t in by_ticker:
+            iv_rows += [[t, iv.start, iv.end, False] for iv in by_ticker[t]]
         if reason:
             bars, divs, splits = [], [], []
         keep[t] = (bars, divs, splits)
         fl = btd.first_last(bars)
         cov[t] = {"has_price": bool(bars), "price_reason": reason, "first": fl[0], "last": fl[1]}
     btd.store_prices(con, keep)
+    con.execute(btd.INTERVAL_DDL)
+    con.execute("DELETE FROM bt_interval_coverage")
+    con.executemany("INSERT INTO bt_interval_coverage VALUES (?,?,?,?)", iv_rows)
 
     # Securities: current members from the universe files; removed US names via EDGAR names/SIC.
     frames_idx = None
@@ -134,8 +144,13 @@ def build(bt_path: Path, changes_html: str, current_html: str, sp_csv: str,
             if cik:
                 try:
                     sub_raw = btd.submissions(ep, cik)
-                    sector = btd.sic_to_sector(sub_raw.get("sic"))
-                    sector_src = "SECTOR_FROM_SIC" if sector else None
+                    if btd.ticker_matches(sub_raw, t):
+                        sector = btd.sic_to_sector(sub_raw.get("sic"))
+                        sector_src = "SECTOR_FROM_SIC" if sector else "NO_SECTOR_SIC"
+                    else:
+                        log.info("CIK %s (%s) does not list %s: dropped", cik,
+                                 sub_raw.get("name"), t)
+                        cik, cik_src = None, "NAME_MATCH_TICKER_MISMATCH"
                 except Exception as e:  # noqa: BLE001 - recorded, not fatal
                     log.warning("submissions %s %s: %s", t, cik, e)
         currency = "CAD" if market == "TSX" else "USD"
@@ -224,11 +239,14 @@ def members_by_date(con, universe: str, dates: list[date]) -> dict[date, list[st
     con.execute("DELETE FROM bt_universe WHERE universe=?", [universe])
     out, rows = {}, []
     if universe == "US":
+        valid = [mem.Interval(t, s, e) for t, s, e in con.execute(
+            "SELECT ticker, start_date, end_date FROM bt_interval_coverage WHERE valid").fetchall()]
         intervals = mem.load(con)
         for d in dates:
             ms = sorted(mem.members_on(intervals, d))
-            rows += [[universe, d, t, bool(cov.get(t))] for t in ms]
-            out[d] = [t for t in ms if cov.get(t)]
+            ok = mem.members_on(valid, d)
+            rows += [[universe, d, t, bool(cov.get(t)) and t in ok] for t in ms]
+            out[d] = [t for t in ms if cov.get(t) and t in ok]
     else:
         tsx = [t for t, mk in con.execute(
             "SELECT ticker, market FROM bt_ticker_coverage").fetchall() if mk == "TSX"]

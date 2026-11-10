@@ -121,7 +121,8 @@ def build_intervals(current: Iterable[str], changes: Iterable[Change],
             if z not in open_:
                 open_[z] = d - timedelta(days=1)
     for t, end in open_.items():
-        out.append(Interval(t, start, end))
+        if end is None or end >= start:  # a removal dated exactly `start` leaves nothing
+            out.append(Interval(t, start, end))
     out.sort(key=lambda i: (i.ticker, i.start))
     merged: list[Interval] = []
     for iv in out:

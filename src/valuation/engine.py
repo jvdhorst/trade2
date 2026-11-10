@@ -41,6 +41,8 @@ def _filings(con, ticker: str, source: str, need_shares: bool = True) -> list[bv
         [ticker, source, *ITEMS]).fetchall()
     grouped: dict[tuple, dict] = defaultdict(dict)
     for pe, fd, item, value, unit, est in rows:
+        if item == SHARES and not (value and value > 0):
+            continue  # EDGAR cover pages of some multi-class filers report 0: treat as missing
         d = grouped[(pe, fd)]
         d[item] = value
         if item != SHARES:

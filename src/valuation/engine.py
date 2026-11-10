@@ -50,6 +50,17 @@ def _filings(con, ticker: str, source: str, need_shares: bool = True) -> list[bv
             if TOTAL_EQUITY in d and (SHARES in d or not need_shares)]
 
 
+def split_factor(con, ticker: str, after: date, through: date) -> float:
+    """Product of split ratios with split date in (after, through]: puts a per-share figure
+    known at `after` on the share basis of `through` (spec docs/models/backtest.md §Splits).
+    1.0 when the `splits` table is empty (the live DB)."""
+    if through <= after:
+        return 1.0
+    row = con.execute("SELECT product(ratio) FROM splits WHERE ticker=? AND date>? AND date<=?",
+                      [ticker, after, through]).fetchone()
+    return float(row[0]) if row and row[0] is not None else 1.0
+
+
 def build_inputs(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] | None = None):
     inputs, skipped = [], {}
     secs = con.execute(
@@ -84,7 +95,9 @@ def build_inputs(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] 
         inp = bv.BookValueInputs(
             ticker=ticker, as_of=as_of, price=price_row[1], trading_currency=currency,
             reporting_currency=rep_ccy, total_equity=d[TOTAL_EQUITY],
-            shares_outstanding=d[SHARES] * conversion, period_end=filing.period_end,
+            shares_outstanding=d[SHARES] * conversion
+            * split_factor(con, ticker, filing.filed_date, price_row[0]),
+            period_end=filing.period_end,
             filed_date=filing.filed_date,
             noncontrolling_interest=d.get("noncontrolling_interest") or 0.0,
             preferred_equity=d.get("preferred_equity") or 0.0,
@@ -130,8 +143,11 @@ def ni_common_ttm(con, ticker: str, as_of: date):
 
 
 def dps_ttm(con, ticker: str, as_of: date) -> float:
-    rows = con.execute("SELECT ex_date, amount FROM dividends WHERE ticker=? AND ex_date<=?",
-                       [ticker, as_of]).fetchall()
+    # Dividends are stored per as-traded share; restate each on the as_of share basis.
+    rows = con.execute(
+        "SELECT d.ex_date, d.amount / coalesce((SELECT product(s.ratio) FROM splits s "
+        "WHERE s.ticker=d.ticker AND s.date>d.ex_date AND s.date<=?), 1) "
+        "FROM dividends d WHERE d.ticker=? AND d.ex_date<=?", [as_of, ticker, as_of]).fetchall()
 
     class _D:
         __slots__ = ("ex_date", "amount")

@@ -20,6 +20,7 @@ class TTMResult:
     filed_date: date | None = None
     quarter_ends: tuple[date, ...] = ()
     flags: frozenset[str] = field(default_factory=frozenset)
+    quarter_values: tuple[float, ...] = ()  # the 4 summed values, same order as quarter_ends
 
 
 def is_quarter_gap(days: int) -> bool:
@@ -48,7 +49,7 @@ def ttm(quarters: Iterable[Any], as_of: date) -> TTMResult:
     return TTMResult(
         value=sum(r.value for r in rows), period_end=ends[0],
         filed_date=max(r.filed_date for r in rows), quarter_ends=tuple(ends),
-        flags=frozenset(flags),
+        flags=frozenset(flags), quarter_values=tuple(r.value for r in rows),
     )
 
 

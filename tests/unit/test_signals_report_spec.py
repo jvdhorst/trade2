@@ -29,12 +29,18 @@ LABELS = {"BUY", "HOLD", "SELL", "NO_SIGNAL", "NOT_ELIGIBLE"}
 
 COLUMNS = [
     "ticker", "market", "sector", "eligible", "elig_fail_reason", "price", "bvps", "pb", "roe0",
-    "a_signal", "a_no_signal_reason", "a_mos", "a_v_ri", "a_mos_up", "a_mos_down",
+    # v0.2.0: a_signal = screen_signal, a_model_signal = signal (residual_income §Report v2)
+    "a_signal", "a_model_signal", "a_no_signal_reason", "a_mos", "a_v_ri", "a_mos_up",
+    "a_mos_down",
     "a_justified_pb", "b_signal", "b_no_signal_reason", "b_implied_upside", "b_resid_pct",
     "b_fitted_pb", "b_fair_value",
     # Model C columns (composite.md 0.1.0, Data mapping / Report), before flags
     "c_signal", "c_no_signal_reason", "c_score", "c_pct", "c_n_factors", "c_value",
-    "c_quality", "c_momentum", "c_risk", "flags",
+    "c_quality", "c_momentum", "c_risk",
+    # v0.2.0: Model H columns (shareholder_yield.md §Backtest and report). SPEC-AMBIGUITY: the
+    # spec lists them but not their position; placed before flags, like the Model C columns.
+    "h_signal", "h_no_signal_reason", "h_sy", "h_dy", "h_bby", "h_payout", "h_sy_pct",
+    "flags",
 ]
 
 _SECTION = dict(min_mdtv=1, min_market_cap=0, min_price=0, mdtv_window=1,
@@ -287,7 +293,8 @@ def test_us_bank_g3_base(con, csm):
     assert r["bvps"] == approx(50.0)
     assert r["pb"] == approx(1.5)
     assert r["roe0"] == approx(13 / 96)
-    assert r["a_signal"] == "SELL"
+    assert r["a_signal"] == "HOLD"  # v0.2.0: screen shows HOLD for a model SELL
+    assert r["a_model_signal"] == "SELL"  # v0.2.0: model label kept
     assert blank(r["a_no_signal_reason"])
     assert r["a_v_ri"] == approx(58.567222546400856)
     assert r["a_mos"] == approx(-0.2191036993813219)
@@ -297,7 +304,7 @@ def test_us_bank_g3_base(con, csm):
     # Financials has < 12 fit names in this DB -> Model B has no fit.
     assert (r["b_signal"], r["b_no_signal_reason"]) == ("NO_SIGNAL", "NO_FIT")
     assert blank(r["b_fitted_pb"]) and blank(r["b_resid_pct"])
-    assert flagset(r["flags"]) == set()
+    assert flagset(r["flags"]) == {"SELL_ZONE"}  # v0.2.0: SELL_ZONE on the model SELL
 
 
 def test_ineligible_name_keeps_numbers(con, csm):
@@ -378,7 +385,8 @@ def test_spot_equity_flag(con, csm):
     assert "ROE_SPOT_EQUITY" in flagset(r["flags"])
     assert r["roe0"] == approx(0.13)
     assert r["a_v_ri"] == approx(57.455952111741375)
-    assert r["a_signal"] == "SELL"
+    assert r["a_signal"] == "HOLD"  # v0.2.0: screen_signal
+    assert r["a_model_signal"] == "SELL"
     assert "ROE_SPOT_EQUITY" not in flagset(row(df, "BANK")["flags"])
 
 
@@ -446,7 +454,7 @@ def test_insurer_csm_missing_needs_input(con, csm, rows):
     assert blank(r["bvps"]) and blank(r["pb"]) and blank(r["roe0"]) and blank(r["a_v_ri"])
     assert "CSM_ADJUSTED" not in flagset(r["flags"])
     b = row(df, "BANK")  # not in the file: unaffected
-    assert b["a_signal"] == "SELL" and b["bvps"] == approx(50.0)
+    assert b["a_signal"] == "HOLD" and b["bvps"] == approx(50.0)  # v0.2.0: screen_signal
 
 
 def test_insurer_csm_row_filed_after_earlier_as_of(con, csm):
@@ -589,10 +597,18 @@ def test_no_balance_sheet(con, csm, ticker):
 # ---------------------------------------------------------------------------
 
 
-def disclaimer(as_of):
-    return ("Screening signals for human review, not investment advice. Models: "
-            f"residual_income/0.1.0, peer_regression/0.1.0. as_of {as_of.isoformat()}. "
-            "No combined vote (Phase 10).")
+def assert_disclaimer(text, as_of):
+    # v0.2.0: peer_regression §Data mapping: "the disclaimer line adds `Model B is diagnostic
+    # only.`" (position not fixed). SPEC-AMBIGUITY: residual_income §Report v2 still prints the
+    # 0.1.0 model versions; we require the live MODEL_VERSIONs (0.2.0) instead of exact text.
+    from valuation.models.peer_regression import MODEL_VERSION as B_VERSION
+    from valuation.models.residual_income import MODEL_VERSION as A_VERSION
+
+    assert text.startswith("Screening signals for human review, not investment advice. Models: ")
+    assert A_VERSION in text and B_VERSION in text
+    assert f"as_of {as_of.isoformat()}." in text
+    assert "No combined vote (Phase 10)." in text
+    assert "Model B is diagnostic only." in text
 
 
 def test_write_signals_files(con, csm, tmp_path):
@@ -605,7 +621,8 @@ def test_write_signals_files(con, csm, tmp_path):
     assert pq_path == out / AS_OF.isoformat() / "screen_signals.parquet"
 
     first = csv_path.read_text().splitlines()[0]
-    assert first == "# " + disclaimer(AS_OF)
+    assert first.startswith("# ")
+    assert_disclaimer(first[2:], AS_OF)  # v0.2.0: was an exact v0.1.0 string
     assert first.startswith("# Screening signals for human review, not investment advice.")
     back = pd.read_csv(csv_path, skiprows=1)
     assert list(back.columns) == COLUMNS
@@ -618,7 +635,8 @@ def test_write_signals_files(con, csm, tmp_path):
     assert b"disclaimer" in meta
     text = meta[b"disclaimer"].decode()
     assert "not investment advice" in text
-    assert text.lstrip("# ") == disclaimer(AS_OF)
+    assert_disclaimer(text.lstrip("# "), AS_OF)
+    assert text.lstrip("# ") == first[2:]
     assert "SCREEN_" not in csv_path.read_text()
 
 
@@ -628,7 +646,8 @@ def test_written_values_round_trip(con, csm, tmp_path):
                                key=lambda p: str(p).endswith(".parquet"))
     back = pd.read_csv(csv_path, skiprows=1)
     r = back[back["ticker"] == "BANK"].iloc[0]
-    assert r["a_signal"] == "SELL"
+    assert r["a_signal"] == "HOLD"  # v0.2.0: screen_signal
+    assert r["a_model_signal"] == "SELL"
     assert float(r["a_v_ri"]) == pytest.approx(58.567222546400856, rel=1e-6)
     pdf = pq.read_table(pq_path).to_pandas()
     r = pdf[pdf["ticker"] == "BANK"].iloc[0]

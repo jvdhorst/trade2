@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-MODEL_VERSION = "peer_regression/0.1.0"
+MODEL_VERSION = "peer_regression/0.2.0"
+STATUS = "diagnostic"  # v0.2.0: shown for context, never counted toward the Phase 10 gate
 
 MIN_FIT = 12
 MIN_R2 = 0.20
@@ -22,6 +23,9 @@ BUY_UPSIDE = 0.15
 SELL_UPSIDE = -0.15
 ZERO_SS = 1e-12  # sum of squares treated as zero (spec: ZERO_VARIANCE)
 BOOK_SECTORS = frozenset({"Financials", "Utilities", "Real Estate", "Energy", "Materials"})
+# v0.2.0 (P7-14): fee businesses whose equity book is not an operating asset -> EV branch
+EV_SUB_INDUSTRIES = frozenset({"Transaction & Payment Processing Services",
+                               "Financial Exchanges & Data"})
 
 BUY, HOLD, SELL, NO_SIGNAL, NOT_ELIGIBLE = "BUY", "HOLD", "SELL", "NO_SIGNAL", "NOT_ELIGIBLE"
 ROE_WINSORIZED = "ROE_WINSORIZED"
@@ -38,6 +42,11 @@ class PBObs:
     eligible: bool | None
     flags: frozenset[str] = field(default_factory=frozenset)
     needs_csm: bool = False
+    sub_industry: str | None = None  # v0.2.0
+
+
+def _ev(o: PBObs) -> bool:
+    return o.sub_industry in EV_SUB_INDUSTRIES
 
 
 @dataclass(frozen=True)
@@ -100,7 +109,8 @@ def map_signal(resid_pct: float, upside: float) -> str:
 
 
 def _scored(o: PBObs) -> bool:
-    return (o.eligible is True and not o.needs_csm and o.bvps is not None and o.bvps > 0
+    return (o.eligible is True and not _ev(o) and not o.needs_csm
+            and o.bvps is not None and o.bvps > 0
             and o.roe is not None)
 
 
@@ -148,14 +158,14 @@ def run_peer_regression(obs: Sequence[PBObs]) -> tuple[list[PBResult], dict[str,
     for o in obs:
         if o.price is None or o.price <= 0:
             raise ValueError(f"{o.ticker}: price must be > 0")
-        if o.sector in BOOK_SECTORS:
+        if o.sector in BOOK_SECTORS and not _ev(o):
             by_sector.setdefault(o.sector, []).append(o)
     fits = {s: fit_sector(group) for s, group in by_sector.items()}
 
     # residuals first (needed for percentiles within the scored set)
     pre: dict[int, dict] = {}
     for k, o in enumerate(obs):
-        fit = fits.get(o.sector)
+        fit = None if _ev(o) else fits.get(o.sector)
         d: dict = {"pb": o.price / o.bvps if o.bvps is not None and o.bvps > 0 else None,
                    "roe_w": None, "fitted_pb": None, "fair_value": None, "residual": None,
                    "implied_upside": None}
@@ -177,7 +187,7 @@ def run_peer_regression(obs: Sequence[PBObs]) -> tuple[list[PBResult], dict[str,
 
     results = []
     for k, o in enumerate(obs):
-        d, fit = pre[k], fits.get(o.sector)
+        d, fit = pre[k], (None if _ev(o) else fits.get(o.sector))
         resid_pct = None
         if fit is not None and _scored(o) and d["residual"] is not None:
             others = scored_res[o.sector]
@@ -196,7 +206,7 @@ def run_peer_regression(obs: Sequence[PBObs]) -> tuple[list[PBResult], dict[str,
         else:
             checks = [
                 ("NO_SECTOR", not o.sector),
-                ("EV_BRANCH_PENDING", o.sector not in BOOK_SECTORS),
+                ("EV_BRANCH_PENDING", o.sector not in BOOK_SECTORS or _ev(o)),
                 ("NEEDS_CSM_INPUT", o.needs_csm),
                 ("NEG_BOOK", o.bvps is None or o.bvps <= 0),
                 ("NO_ROE", o.roe is None),

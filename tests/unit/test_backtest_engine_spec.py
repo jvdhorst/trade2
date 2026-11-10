@@ -398,10 +398,12 @@ def test_restatement_filed_on_or_before_d_is_used(base_frame):
 def test_ni_restatement_timing(base_frame):
     q = date(2020, 3, 31)
     con = base_db()
-    fact(con, "F02", q, date(2020, 7, 1), "ni_common_q", 3.0e9, "USD")
+    # v0.2.0: restated value 3.0e9 -> 0.5e9. 3.0e9 is a dominant quarter (> 50% of TTM NI), so
+    # Model A's one-off rule (residual_income 0.2.0 R2) normalises roe0 back to the base 0.05.
+    fact(con, "F02", q, date(2020, 7, 1), "ni_common_q", 0.5e9, "USD")
     assert_same(sig(con), base_frame)
     con = base_db()
-    fact(con, "F02", q, date(2020, 6, 20), "ni_common_q", 3.0e9, "USD")
+    fact(con, "F02", q, date(2020, 6, 20), "ni_common_q", 0.5e9, "USD")
     df = sig(con)
     assert row(df, "F02")["roe0"] != pytest.approx(row(base_frame, "F02")["roe0"], rel=1e-9)
 

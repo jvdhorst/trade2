@@ -1,4 +1,6 @@
-"""Spec tests for Model A, residual income value (docs/models/residual_income.md, v0.1.0).
+"""Spec tests for Model A, residual income value (docs/models/residual_income.md, v0.1.0;
+updated for v0.2.0 where the spec changed: see `# v0.2.0` comments and
+test_residual_income_v2_spec.py).
 
 Written from the spec only (not from the implementation). Golden values are taken
 from the spec's worked examples G1-G7 (all re-derived independently by QA with a
@@ -114,7 +116,7 @@ def assert_values_equal(a: RIResult, b: RIResult, fields=NUMERIC_FIELDS):
 
 
 def test_model_version():
-    assert MODEL_VERSION == "residual_income/0.1.0"
+    assert MODEL_VERSION == "residual_income/0.2.0"  # v0.2.0: revision round v2
 
 
 def test_exported_constants():
@@ -351,7 +353,7 @@ def test_g3_base():
     assert r.mos_up == approx(-0.24789022524478166)
     assert r.mos_down == approx(-0.1886437060853584)
     assert r.justified_pb == approx(BASE_JPB)
-    assert r.flags == frozenset()
+    assert r.flags == frozenset({"SELL_ZONE"})  # v0.2.0: model SELL carries SELL_ZONE
 
 
 def test_g3_price_45_buy():
@@ -377,7 +379,7 @@ def test_g3_spot_equity():
     assert r.mos == approx(-0.23392063851011502)
     assert r.mos_down == approx(-0.20406076860388633)
     assert r.signal == "SELL"
-    assert r.flags == frozenset({SPOT})
+    assert r.flags == frozenset({SPOT, "SELL_ZONE"})  # v0.2.0: model SELL carries SELL_ZONE
 
 
 def test_g3_clip_high():
@@ -388,8 +390,8 @@ def test_g3_clip_high():
     assert r.b == approx(1 - 2.6 / 24)
     assert r.v_ri == approx(128.46557945890916)
     assert r.mos == approx(0.7128743927854555)
-    assert r.signal == "BUY"
-    assert r.flags == frozenset({"ROE_CLIPPED"})
+    assert r.signal == "HOLD"  # v0.2.0: BUY on a clipped ROE is blocked
+    assert r.flags == frozenset({"ROE_CLIPPED", "BUY_BLOCKED_CLIP"})  # v0.2.0: R2
 
 
 def test_g3_clip_low():
@@ -401,7 +403,7 @@ def test_g3_clip_low():
     assert r.v_ri == approx(20.257657687590946)
     assert r.justified_pb == approx(-0.26315789473684215)
     assert r.signal == "SELL"
-    assert r.flags == frozenset({"ROE_CLIPPED"})
+    assert r.flags == frozenset({"ROE_CLIPPED", "SELL_ZONE"})  # v0.2.0: SELL_ZONE on model SELL
 
 
 def test_g3_loss_without_clip():
@@ -411,7 +413,7 @@ def test_g3_loss_without_clip():
     assert r.b == approx(0.6)
     assert r.v_ri == approx(31.060323406323064)
     assert r.signal == "SELL"
-    assert r.flags == frozenset()
+    assert r.flags == frozenset({"SELL_ZONE"})  # v0.2.0: SELL_ZONE on model SELL
 
 
 def test_sensitivity_reruns_with_shifted_fade_target():
@@ -485,7 +487,8 @@ def test_g5_clip_after_average():
     assert r.roe_raw == approx(1 / 9.5)
     assert r.flags >= {"ROE_CLIPPED", "CYCLICAL_ROE"}
     assert r.v_ri == approx(66.4010543305594)
-    assert r.signal == "BUY"
+    assert r.signal == "HOLD"  # v0.2.0: BUY on a clipped ROE is blocked
+    assert "BUY_BLOCKED_CLIP" in r.flags  # v0.2.0: R2
 
 
 def test_g5_no_clip_flag_when_raw_would_clip_but_average_does_not():
@@ -723,7 +726,7 @@ def test_g7_not_eligible_beats_neg_book():
 def test_g7_fair_value_book():
     r = run(sector="Real Estate", market="TSX")
     assert r.signal == "SELL"
-    assert r.flags == frozenset({"FAIR_VALUE_BOOK"})
+    assert r.flags == frozenset({"FAIR_VALUE_BOOK", "SELL_ZONE"})  # v0.2.0: SELL_ZONE
 
 
 def test_real_estate_us_no_fair_value_flag():
@@ -824,20 +827,23 @@ def test_outputs_kept_on_withheld_signal(overrides):
 
 
 def test_flag_pit_estimated():
-    assert run(filed_estimated=True).flags == frozenset({"PIT_ESTIMATED"})
+    # v0.2.0: BASE is a model SELL, so SELL_ZONE is set too
+    assert run(filed_estimated=True).flags == frozenset({"PIT_ESTIMATED", "SELL_ZONE"})
 
 
 def test_flags_pass_through():
     r = run(ttm_flags=frozenset({"STALE_TTM"}), data_flags=frozenset({"ROE_PERIOD_MISMATCH"}))
-    assert r.flags == frozenset({"STALE_TTM", "ROE_PERIOD_MISMATCH"})
+    # v0.2.0: BASE is a model SELL, so SELL_ZONE is set too
+    assert r.flags == frozenset({"STALE_TTM", "ROE_PERIOD_MISMATCH", "SELL_ZONE"})
     assert r.signal == "SELL"
 
 
 def test_flags_union():
     r = run(G6, common_equity_start=None, ni_common_ttm=60e9,
             ttm_flags=frozenset({"STALE_TTM"}), data_flags=frozenset({"X_FLAG"}))
+    # v0.2.0: ROE clipped at 0.35 maps to BUY (mos 1.297) -> blocked: BUY_BLOCKED_CLIP
     assert r.flags == frozenset({"CSM_ADJUSTED", "PIT_ESTIMATED", SPOT, "ROE_CLIPPED",
-                                 "STALE_TTM", "X_FLAG"})
+                                 "STALE_TTM", "X_FLAG", "BUY_BLOCKED_CLIP"})
 
 
 @pytest.mark.parametrize("flag_overrides", [

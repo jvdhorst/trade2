@@ -46,7 +46,7 @@ DEFAULTS = {
         "mdtv_window": 63,
         "max_zero_volume_days": 3,
         "max_stale_sessions": 5,
-        "min_history_sessions": 273,
+        "min_history_sessions": 274,  # v0.2.0 (eligibility 0.1.1): E6 273 -> 274
     },
     "us": {
         "min_mdtv": 25_000_000,
@@ -55,7 +55,7 @@ DEFAULTS = {
         "mdtv_window": 63,
         "max_zero_volume_days": 3,
         "max_stale_sessions": 5,
-        "min_history_sessions": 273,
+        "min_history_sessions": 274,  # v0.2.0 (eligibility 0.1.1): E6 273 -> 274
     },
 }
 

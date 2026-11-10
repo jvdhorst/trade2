@@ -328,13 +328,15 @@ def coverage(df: pd.DataFrame, skipped: dict[str, str], meta: dict[str, dict],
 
 SIGNAL_COLUMNS = [
     "ticker", "market", "sector", "eligible", "elig_fail_reason", "price", "bvps", "pb", "roe0",
-    "a_signal", "a_no_signal_reason", "a_mos", "a_v_ri", "a_mos_up", "a_mos_down",
+    "a_signal", "a_model_signal", "a_no_signal_reason", "a_mos", "a_v_ri", "a_mos_up", "a_mos_down",
     "a_justified_pb", "b_signal", "b_no_signal_reason", "b_implied_upside", "b_resid_pct",
     "b_fitted_pb", "b_fair_value", "c_signal", "c_no_signal_reason", "c_score", "c_pct",
-    "c_n_factors", "c_value", "c_quality", "c_momentum", "c_risk", "flags",
+    "c_n_factors", "c_value", "c_quality", "c_momentum", "c_risk",
+    "h_signal", "h_no_signal_reason", "h_sy", "h_dy", "h_bby", "h_payout", "h_sy_pct", "flags",
 ]
 C_COLUMNS = ("c_signal", "c_no_signal_reason", "c_score", "c_pct", "c_n_factors", "c_value",
              "c_quality", "c_momentum", "c_risk")
+H_COLUMNS = ("h_signal", "h_no_signal_reason", "h_sy", "h_dy", "h_bby", "h_payout", "h_sy_pct")
 LABELS = ("BUY", "HOLD", "SELL", "NO_SIGNAL", "NOT_ELIGIBLE")
 RF_SERIES = {"TSX": "CA10Y", "US": "US10Y"}
 
@@ -402,6 +404,19 @@ def _filing_year_before(filings: dict[str, list[bv.Filing]], q: date) -> bv.Fili
     return None
 
 
+def shares_prev_filing(filings: list[bv.Filing], period_end_t: date,
+                       as_of: date) -> bv.Filing | None:
+    """Model H shares_prev (shareholder_yield.md, Data mapping): from ONE source's filings, the
+    latest period_end in [period_end_t − 380, period_end_t − 350] days, filed ≤ as_of, shares > 0;
+    equal period_end → later filed. None if none."""
+    from .models import shareholder_yield as sy
+
+    lo, hi = sy.PREV_WINDOW_DAYS
+    c = [f for f in filings if f.filed_date <= as_of and (f.data.get(SHARES) or 0) > 0
+         and lo <= (period_end_t - f.period_end).days <= hi]
+    return max(c, key=lambda f: (f.period_end, f.filed_date)) if c else None
+
+
 def _ni_rows(con, ticker: str, as_of: date) -> dict[str, list]:
     rows = con.execute(
         "SELECT source, period_end, filed_date, value, unit, filed_estimated FROM fundamentals "
@@ -442,6 +457,7 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
     from .models import composite as cm
     from .models import peer_regression as pr
     from .models import residual_income as ri
+    from .models import shareholder_yield as sy
 
     liquidity = liquidity if liquidity is not None else elig.load_config()
     csm_rows = load_insurer_csm(csm_path)
@@ -455,6 +471,11 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
 
     a_results: dict[str, ri.RIResult] = {}
     details: dict[str, dict] = {}
+    h_inputs: dict[str, sy.SYInputs] = {}
+
+    def a_elig(e):
+        return None if e is None else e.eligible
+
     for inp, meta in inputs:
         t = inp.ticker
         market = market_of(t, inp.trading_currency) or "US"
@@ -495,6 +516,7 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
             filed_estimated=bool(meta.get("filed_estimated")) or ttm_est,
             roe_history=hist, csm_relevant=csm_relevant, csm_after_tax=csm,
             ni_currency=ni_ccy if res.value is not None else None, reporting_currency=rep_ccy,
+            ni_quarters=res.quarter_values if res.value is not None else None,
         ))
         a_results[t] = a
         details[t] = {
@@ -503,23 +525,51 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
             "ttm_period_end": q0.isoformat() if q0 else None,
             "ni_common_ttm": res.value, "ni_ccy": ni_ccy, "ce_end": ce_end, "ce_start": ce_start,
             "dps_ttm": dps, "roe_history": list(hist), "csm_after_tax": csm,
+            "ni_quarters": list(res.quarter_values) if res.value is not None else None,
         }
+        # Model H (shareholder_yield.md, Data mapping): share counts as filed, same source.
+        conv = meta.get("share_conversion") or 1.0
+        sh_t = meta.get(SHARES)
+        sh_t = sh_t * conv if sh_t else None
+        f_prev = shares_prev_filing(_filings(con, t, meta["source"]), inp.period_end, as_of)
+        sh_prev = f_prev.data[SHARES] * conv if f_prev is not None else None
+        sf = split_factor(con, t, f_prev.period_end, inp.period_end) if f_prev else 1.0
+        h_inputs[t] = sy.SYInputs(
+            ticker=t, market=market, sector=inp.sector, eligible=a_elig(e), price=inp.price,
+            dps_ttm=dps, shares_t=sh_t, shares_prev=sh_prev, split_factor=sf,
+            ni_common_ttm=None if (ni_ccy and rep_ccy and ni_ccy != rep_ccy) else res.value,
+            fx_rate=inp.fx_rate,
+            flags=frozenset(a.flags & {"PIT_ESTIMATED", "NO_TTM", "STALE_TTM"}))
+        details[t].update({"h_shares_t": sh_t, "h_shares_prev": sh_prev, "h_split_factor": sf,
+                           "h_period_end_prev": f_prev.period_end.isoformat() if f_prev
+                           else None})
 
+    subs = dict(con.execute("SELECT ticker, gics_sub_industry FROM securities").fetchall())
     obs = [pr.PBObs(ticker=t, sector=a.sector, price=a.price, bvps=a.b0, roe=a.roe_raw,
                     eligible=None if eligibility.get(t) is None else eligibility[t].eligible,
-                    flags=frozenset(), needs_csm=a.no_signal_reason == "NEEDS_CSM_INPUT")
+                    flags=frozenset(), needs_csm=a.no_signal_reason == "NEEDS_CSM_INPUT",
+                    sub_industry=subs.get(t) or None)
            for t, a in a_results.items()]
     b_list, fits = pr.run_peer_regression(obs)
     b_results = {b.ticker: b for b in b_list}
     c_results, c_stats, c_extra = _run_model_c(con, as_of, universe, secs, inputs, a_results,
                                                details, eligibility, bars)
 
+    h_results = {t: sy.compute_sy(i) for t, i in h_inputs.items()}
+    h_pct: dict[str, float | None] = {}
+    for m in ("TSX", "US"):
+        h_pct.update(sy.sy_percentiles({t: h.sy for t, h in h_results.items()
+                                        if h.sy is not None and h_inputs[t].market == m
+                                        and h_inputs[t].eligible is True}))
+
     run_id = uuid.uuid4().hex[:12]
     con.execute("INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?)", [
         run_id, datetime.now(), as_of, "signals", _git_sha(),
-        json.dumps({"models": [ri.MODEL_VERSION, pr.MODEL_VERSION, cm.MODEL_VERSION],
-                    "composite_stats": {"bounds": c_stats.bounds,
-                                        "sectors": {f"{k[0]}|{k[1]}": v.__dict__
+        json.dumps({"models": [ri.MODEL_VERSION, pr.MODEL_VERSION, cm.MODEL_VERSION,
+                               sy.MODEL_VERSION],
+                    "composite_stats": {"bounds": {"|".join(k): v
+                                                   for k, v in c_stats.bounds.items()},
+                                        "sectors": {"|".join(k): v.__dict__
                                                     for k, v in c_stats.sectors.items()}},
                     "liquidity": liquidity, "csm_path": str(csm_path),
                     "skipped": skipped,
@@ -537,13 +587,14 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
             reason = "NO_DATA" if label == "NO_SIGNAL" else None
             rec = {"ticker": t, "market": market, "sector": sector, "eligible": eligible,
                    "elig_fail_reason": e.elig_fail_reason if e else "",
-                   "a_signal": label, "a_no_signal_reason": reason,
+                   "a_signal": label, "a_model_signal": label, "a_no_signal_reason": reason,
                    "b_signal": label, "b_no_signal_reason": reason}
         else:
             flags |= a.flags | b.flags
             rec = {"ticker": t, "market": a.market, "sector": a.sector, "eligible": eligible,
                    "elig_fail_reason": e.elig_fail_reason if e else "", "price": a.price,
-                   "bvps": a.b0, "pb": a.pb, "roe0": a.roe0, "a_signal": a.signal,
+                   "bvps": a.b0, "pb": a.pb, "roe0": a.roe0, "a_signal": a.screen_signal,
+                   "a_model_signal": a.signal,
                    "a_no_signal_reason": a.no_signal_reason, "a_mos": a.mos, "a_v_ri": a.v_ri,
                    "a_mos_up": a.mos_up, "a_mos_down": a.mos_down,
                    "a_justified_pb": a.justified_pb, "b_signal": b.signal,
@@ -557,6 +608,16 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
                         "c_score": c.score, "c_pct": c.pct, "c_n_factors": c.n_factors,
                         "c_value": c.value, "c_quality": c.quality, "c_momentum": c.momentum,
                         "c_risk": c.risk})
+        h = h_results.get(t)
+        if h is not None:
+            flags |= set(h.flags)
+            rec.update({"h_signal": h.signal, "h_no_signal_reason": h.no_signal_reason,
+                        "h_sy": h.sy, "h_dy": h.dy, "h_bby": h.bby, "h_payout": h.payout,
+                        "h_sy_pct": h_pct.get(t)})
+        else:
+            label = "NO_SIGNAL" if eligible is True else "NOT_ELIGIBLE"
+            rec.update({"h_signal": label,
+                        "h_no_signal_reason": "NO_DATA" if label == "NO_SIGNAL" else None})
         rec["flags"] = ",".join(sorted(flags))
         records.append(rec)
         payload = {**rec, **details.get(t, {})}
@@ -568,13 +629,19 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
             payload.update({"roe_raw": a.roe_raw, "roe_basis": a.roe_basis, "r": a.r, "b": a.b,
                             "eps_ttm": a.eps_ttm, "v_ri_up": a.v_ri_up,
                             "v_ri_down": a.v_ri_down, "b_residual": b.residual,
-                            "b_roe_w": b.roe_w, "b_n_fit": b.n_fit, "b_r2": b.r2})
+                            "b_roe_w": b.roe_w, "b_n_fit": b.n_fit, "b_r2": b.r2,
+                            "a_one_off": a.one_off, "a_ni_norm": a.ni_norm,
+                            "a_roe_norm": a.roe_norm})
+        if h is not None:
+            payload.update({"h_eps_ttm": h.eps_ttm, "h_funded": h.funded})
         con.execute("INSERT INTO signals VALUES (?,?,?,?,?,?,?)",
-                    [run_id, t, as_of, f"{ri.MODEL_VERSION},{pr.MODEL_VERSION}",
+                    [run_id, t, as_of,
+                     f"{ri.MODEL_VERSION},{pr.MODEL_VERSION},{cm.MODEL_VERSION},{sy.MODEL_VERSION}",
                      rec["a_signal"], rec["b_signal"], json.dumps(payload, default=str)])
     df = pd.DataFrame.from_records(records, columns=SIGNAL_COLUMNS)
     counts: dict[str, dict[str, dict[str, int]]] = {}
-    for model, col in (("A", "a_signal"), ("B", "b_signal"), ("C", "c_signal")):
+    for model, col in (("A", "a_signal"), ("B", "b_signal"), ("C", "c_signal"),
+                       ("H", "h_signal")):
         counts[model] = {}
         for m in ("TSX", "US"):
             sub = df[df["market"] == m]
@@ -598,7 +665,7 @@ def _flow(con, ticker: str, item: str, as_of: date, rep_ccy: str | None, flags: 
 
 def _run_model_c(con, as_of, universe, secs, inputs, a_results, details, eligibility, bars):
     """Model C (spec docs/models/composite.md, Data mapping): one CompositeInputs per universe
-    ticker, all names of the date pooled (TSX + US)."""
+    ticker; v0.2.0 statistics per market."""
     from .models import composite as cm
     from .providers.base import CAPEX_Q, CFO_Q, GROSS_PROFIT_Q
 
@@ -612,6 +679,7 @@ def _run_model_c(con, as_of, universe, secs, inputs, a_results, details, eligibi
         mom, vol = cm.momentum(closes), cm.volatility(closes)
         extra[t] = {"c_mom": mom, "c_vol": vol}
         common = {"ticker": t, "sector": secs.get(t, (None, None))[1],
+                  "market": market_of(t, secs.get(t, (None, None))[0]) or "US",
                   "eligible": None if e is None else e.eligible,
                   "history_ok": None if e is None else e.model_c_history_ok,
                   "mom": mom, "vol": vol}

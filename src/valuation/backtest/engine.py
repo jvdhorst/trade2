@@ -22,7 +22,7 @@ import pandas as pd
 from .data import sic_to_sector  # noqa: F401  (public API, spec §6)
 from .membership import members_on
 
-MODEL_VERSION = "backtest/0.1.0"
+MODEL_VERSION = "backtest/0.2.0"
 BT_START = REBALANCE_START = date(2014, 1, 1)
 HOLDOUT_MONTHS = 36
 SOURCE_TABLES = ("securities", "prices_daily", "fundamentals", "dividends", "splits",
@@ -38,6 +38,7 @@ BT_DDL = [
         c_signal VARCHAR, c_reason VARCHAR, c_score DOUBLE, c_value DOUBLE, c_quality DOUBLE,
         c_momentum DOUBLE, c_risk DOUBLE, c_v_label VARCHAR, c_q_label VARCHAR,
         c_m_label VARCHAR, c_r_label VARCHAR,
+        h_signal VARCHAR, h_score DOUBLE, h_dy DOUBLE, h_bby DOUBLE,
         PRIMARY KEY (universe, date, ticker))""",
     """CREATE TABLE IF NOT EXISTS bt_dates (
         universe VARCHAR, date DATE, n_members INTEGER, n_with_price INTEGER, seconds DOUBLE,
@@ -46,6 +47,8 @@ BT_DDL = [
         run_id VARCHAR PRIMARY KEY, started_at TIMESTAMP, kind VARCHAR, market VARCHAR,
         thresholds_hash VARCHAR, git_sha VARCHAR, today DATE, n_dates INTEGER,
         model_version VARCHAR)""",
+    # freeze §3: bt_runs also records the frozen parameter hash (revision_v2_freeze.md §2)
+    "ALTER TABLE bt_runs ADD COLUMN IF NOT EXISTS params_hash VARCHAR",
 ]
 
 
@@ -54,6 +57,9 @@ C_ROW_TYPES = {"c_signal": "VARCHAR", "c_reason": "VARCHAR", "c_score": "DOUBLE"
                "c_risk": "DOUBLE", "c_v_label": "VARCHAR", "c_q_label": "VARCHAR",
                "c_m_label": "VARCHAR", "c_r_label": "VARCHAR"}
 C_ROW_COLS = list(C_ROW_TYPES)
+# Model H (revision_v2_freeze.md §3): label, score SY, and its two parts (diagnostics)
+H_ROW_TYPES = {"h_signal": "VARCHAR", "h_score": "DOUBLE", "h_dy": "DOUBLE", "h_bby": "DOUBLE"}
+H_ROW_COLS = list(H_ROW_TYPES)
 
 
 def month_end(y: int, m: int) -> date:
@@ -104,23 +110,34 @@ def thresholds_hash(liquidity: dict | None = None) -> str:
     from ..models import eligibility as elig
     from ..models import peer_regression as pr
     from ..models import residual_income as ri
+    from ..models import shareholder_yield as sy
 
     obj = {"residual_income": _consts(ri), "peer_regression": _consts(pr),
            "composite": {k: v for k, v in _consts(cm).items()},
+           "shareholder_yield": _consts(sy),
            "liquidity": liquidity if liquidity is not None else elig.load_config()}
     blob = json.dumps(obj, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
+def run_model_version() -> str:
+    """bt_runs.model_version: the harness version plus the four frozen model versions."""
+    from ..models.frozen import FROZEN_VERSIONS
+
+    return ",".join([MODEL_VERSION, *FROZEN_VERSIONS])
+
+
 def log_run(con, kind: str, market: str, today: date, n_dates: int) -> str:
     from ..engine import _git_sha
+    from ..models.frozen import FROZEN_V2, params_sha256
 
     for ddl in BT_DDL:
         con.execute(ddl)
     run_id = uuid.uuid4().hex[:12]
-    con.execute("INSERT INTO bt_runs VALUES (?,?,?,?,?,?,?,?,?)",
+    con.execute("INSERT INTO bt_runs (run_id, started_at, kind, market, thresholds_hash, git_sha, "
+                "today, n_dates, model_version, params_hash) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 [run_id, datetime.now(), kind, market, thresholds_hash(), _git_sha(), today,
-                 n_dates, MODEL_VERSION])
+                 n_dates, run_model_version(), params_sha256(FROZEN_V2)])
     return run_id
 
 
@@ -179,13 +196,16 @@ def run_one(db_path: str, d: date, tickers: list[str], csm_path=None) -> tuple[d
         rows.append([
             r["ticker"], r["market"], r["sector"], r["eligible"], r["elig_fail_reason"],
             r.get("price"), r.get("bvps"), r.get("pb"), r.get("roe0"), p.get("roe_raw"),
-            r["a_signal"], r["a_no_signal_reason"], r.get("a_mos"), r["b_signal"],
+            # freeze §3: Model A's backtest label is the MODEL label (with SELL)
+            r.get("a_model_signal", r["a_signal"]), r["a_no_signal_reason"], r.get("a_mos"),
+            r["b_signal"],
             r["b_no_signal_reason"], p.get("b_residual"), r.get("b_resid_pct"),
             r.get("b_implied_upside"), p.get("b_n_fit"), p.get("b_r2"), r["flags"],
             r.get("c_signal"), r.get("c_no_signal_reason"), r.get("c_score"), r.get("c_value"),
             r.get("c_quality"), r.get("c_momentum"), r.get("c_risk"),
             *[(p.get("c_factor_labels") or {}).get(k)
-              for k in ("value", "quality", "momentum", "risk")]])
+              for k in ("value", "quality", "momentum", "risk")],
+            r.get("h_signal"), r.get("h_sy"), r.get("h_dy"), r.get("h_bby")])
     return d, rows, time.time() - t0
 
 
@@ -209,7 +229,18 @@ def run_backtest(db_path: str, universe: str, members_by_date: dict[date, list[s
     (`data/backtest_parts/<universe>/<date>.json`: resumable) and are loaded into the DB after
     the pool has shut down."""
     parts = _part_dir(db_path, universe)
-    todo = sorted(d for d in members_by_date if not (parts / f"{d.isoformat()}.json").exists())
+    from ..models.frozen import FROZEN_V2, params_sha256
+
+    stamp = {"version": run_model_version(), "params_hash": params_sha256(FROZEN_V2)}
+
+    def done(d: date) -> bool:  # a part from another code/parameter version is re-run
+        p = parts / f"{d.isoformat()}.json"
+        if not p.exists():
+            return False
+        head = json.loads(p.read_text())
+        return all(head.get(k) == v for k, v in stamp.items())
+
+    todo = sorted(d for d in members_by_date if not done(d))
     log(f"[{universe}] {len(todo)} dates to run ({len(members_by_date) - len(todo)} cached)")
     t_start = time.time()
     if todo:
@@ -218,7 +249,7 @@ def run_backtest(db_path: str, universe: str, members_by_date: dict[date, list[s
                     for d in todo}
             for f in futs:
                 d, rows, secs = f.result()
-                payload = {"date": d.isoformat(), "seconds": secs,
+                payload = {**stamp, "date": d.isoformat(), "seconds": secs,
                            "n_members": len(members_by_date[d]),
                            "rows": [[_nan_none(v) for v in r] for r in rows]}
                 tmp = parts / f"{d.isoformat()}.json.tmp"
@@ -230,7 +261,7 @@ def run_backtest(db_path: str, universe: str, members_by_date: dict[date, list[s
     for ddl in BT_DDL:
         con.execute(ddl)
     have = {r[0] for r in con.execute("DESCRIBE bt_rows").fetchall()}
-    for col, typ in C_ROW_TYPES.items():  # bt_rows created before Model C (Phase 9)
+    for col, typ in {**C_ROW_TYPES, **H_ROW_TYPES}.items():  # bt_rows from earlier phases
         if col not in have:
             con.execute(f"ALTER TABLE bt_rows ADD COLUMN {col} {typ}")
     con.execute("DELETE FROM bt_rows WHERE universe=?", [universe])
@@ -245,7 +276,7 @@ def run_backtest(db_path: str, universe: str, members_by_date: dict[date, list[s
     cols = ["universe", "date", "ticker", "market", "sector", "eligible", "elig_fail_reason",
             "price", "bvps", "pb", "roe0", "roe_raw", "a_signal", "a_reason", "a_mos",
             "b_signal", "b_reason", "b_residual", "b_resid_pct", "b_upside", "b_n_fit", "b_r2",
-            "flags", *C_ROW_COLS]
+            "flags", *C_ROW_COLS, *H_ROW_COLS]
     df = pd.DataFrame(recs, columns=cols)
     con.register("_df", df)
     con.execute(f"INSERT INTO bt_rows ({', '.join(cols)}) SELECT * FROM _df")

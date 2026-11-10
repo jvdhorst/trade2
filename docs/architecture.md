@@ -2,7 +2,8 @@
 
 Status: as built on 2026-11-09 (book_value 0.2.0, Phase 6 data batch 1 + eligibility 0.1.0, Phase 7 Model A
 residual_income 0.1.0 + Model B peer_regression 0.1.0 book branch + report v2, Phase 8 backtest 0.1.0, Phase 9
-data batch 2 (ttm 0.2.0) + Model C composite 0.1.0 + benchmarks 0.1.1). Planned
+data batch 2 (ttm 0.2.0) + Model C composite 0.1.0 + benchmarks 0.1.1; revision round v2: A 0.2.0, B 0.2.0 diagnostic,
+C 0.2.0, H shareholder_yield 0.1.0, eligibility 0.1.1, frozen params `models/frozen.py`, one-shot holdout guard). Planned
 components are dashed.
 
 ## Data flow
@@ -50,7 +51,8 @@ flowchart LR
         BV["book_value 0.2.0<br/>BVPS, P/B, peer median FV"]
         RI["Model A residual_income 0.1.0<br/>ROE fade to r = 10y + 5% ERP<br/>MoS, r ± 1pp"]
         PB["Model B peer_regression 0.1.0<br/>Theil–Sen ln(P/B) ~ ROE per GICS sector<br/>(book branch; EV branch planned)"]
-        CMP["Model C composite 0.1.0<br/>V/Q/M/R sector z (pooled), equal weights<br/>quintiles + distress / momentum vetoes"]
+        CMP["Model C composite 0.2.0<br/>V/Q/M/R z per (market, sector), equal weights<br/>B/P in book sectors only; quintiles per market + vetoes"]
+        SHY["Model H shareholder_yield 0.1.0<br/>SY = DPS/P + net buyback yield (same-source shares, split-adjusted)"]
         BMK["benchmarks 0.1.1<br/>SPX_TR, SPY/IVV/VOO, TSX, XIC/XIU/ZCN<br/>dist yield vs 10y, TR 1m-5y"]
         ELIG["eligibility 0.1.0<br/>config/liquidity.yaml"]
         TTM["ttm 0.2.0: flow_ttm (NI, CFO, capex, GP, ...), DPS_TTM"]
@@ -151,7 +153,7 @@ sequenceDiagram
     D-->>CLI: valuations, runs
     CLI->>CLI: eligibility filter, TTM NI, DPS, rf; write screen + coverage reports
     P->>Y: chart for 9 benchmarks (6y) → benchmarks_daily
-    CLI->>CLI: Model A per ticker, Model B per sector, Model C cross-section (pooled TSX + US); write screen_signals + benchmarks.csv
+    CLI->>CLI: Model A per ticker, Model B per sector, Model C cross-section (per market), Model H per ticker; write screen_signals + benchmarks.csv
     CLI->>D: crosscheck / crosscheck --issuer (QA)
 ```
 
@@ -164,5 +166,5 @@ sequenceDiagram
 | Bulk upserts | Facts, bars and dividends are inserted as registered DataFrames (P8-8): S&P 500 first load 502 s (was 36 min), TSX 200 s |
 | Fast daily run | Batch prices, one 5-day chart call per ticker for volume, and a refresh policy (`fetch_log`): 251 s for 718 tickers (≤ 5 min target); first load ~45 min incl. the 2-year history backfill |
 | Signals are not advice | Every screen_signals file starts with the disclaimer line (Parquet: metadata `disclaimer`); per-model labels only, no vote before Phase 10 |
-| Backtest point in time | Own DB; prices stored as traded (Yahoo split adjustment undone) so price × shares-as-filed is a real market cap; shares × splits in (filed, d], dividends ÷ splits in (ex, d]; facts `filed_date ≤ d` (+30 days for estimated Yahoo dates); membership on d from the Wikipedia changes table; holdout (last 36 month-ends) computed only with `--holdout`, logged in `bt_runs` with a thresholds hash |
+| Backtest point in time | Own DB; prices stored as traded (Yahoo split adjustment undone) so price × shares-as-filed is a real market cap; shares × splits in (filed, d], dividends ÷ splits in (ex, d]; facts `filed_date ≤ d` (+30 days for estimated Yahoo dates); membership on d from the Wikipedia changes table; holdout (last 36 month-ends): a plain US `run`/`report` never touches those dates; only `backtest run --holdout --freeze docs/models/revision_v2_freeze.md` computes them, once: it refuses unless `FROZEN_V2` hashes to the freeze doc's SHA-256, the doc's JSON hashes to it too, `docs/qa/holdout_v2.md` does not exist and `bt_runs` has no holdout row for the frozen versions (`backtest/holdout.py`); `bt_runs` records thresholds hash + params hash |
 | Spec ↔ code | AN spec → QA tests written from the spec → SW implementation → external cross-checks |

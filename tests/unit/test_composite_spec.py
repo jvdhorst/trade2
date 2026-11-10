@@ -1,4 +1,5 @@
-"""Spec tests for Model C, the VQMR composite (docs/models/composite.md v0.1.0).
+"""Spec tests for Model C, the VQMR composite (docs/models/composite.md v0.1.0; converted to
+v0.2.0 where the spec changed, see `# v0.2.0` comments and test_composite_v2_spec.py).
 
 Written from the spec text and its golden tables only (not from the implementation).
 Printed golden values have 6 decimals; tolerance 1e-6 unless the spec says otherwise.
@@ -59,7 +60,7 @@ def approx(x, tol=TOL):
 # --------------------------------------------------------------------------- constants
 
 def test_constants():
-    assert MODEL_VERSION == "composite/0.1.0"
+    assert MODEL_VERSION == "composite/0.2.0"  # v0.2.0: revision round v2
     assert tuple(WINSOR) == (0.05, 0.95)
     assert MIN_SECTOR_NAMES == 5
     assert MIN_FACTORS == 3
@@ -308,9 +309,10 @@ FULL = dict(price=50.0, market_cap=10000.0, bvps=20.0, ni_ttm=800.0, ni_period_e
 def test_raw_metrics_full_i1():
     m, flags = raw_metrics(ci(**FULL))
     assert set(m) == set(METRICS)
-    exp = dict(ep=0.08, bp=0.4, fcfp=0.08, roe=0.18, gpa=0.375, neg_accruals=0.0375,
+    # v0.2.0: bp None outside BOOK_SECTORS (Industrials)
+    exp = dict(ep=0.08, bp=None, fcfp=0.08, roe=0.18, gpa=0.375, neg_accruals=0.0375,
                neg_leverage=-0.2, mom=0.25, neg_vol=-0.19)
-    assert m == {k: approx(v, 1e-12) for k, v in exp.items()}
+    assert m == {k: (None if v is None else approx(v, 1e-12)) for k, v in exp.items()}
     assert flags == frozenset()
 
 
@@ -326,6 +328,9 @@ def test_raw_metrics_fx_conversion():
                              "ni_ttm": 300.0, "cfo_ttm": 450.0, "capex_ttm": 350.0},
                           fx_rate=1.35))
     assert m["ep"] == approx(0.03, 1e-12) and m["fcfp"] == approx(0.01, 1e-12)
+    assert m["bp"] is None  # v0.2.0: bp None outside BOOK_SECTORS
+    m, _ = raw_metrics(ci(**{**FULL, "market_cap": 13500.0, "price": 54.0, "bvps": 27.0},
+                          sector="Utilities", fx_rate=1.35))
     assert m["bp"] == approx(0.5, 1e-12)  # bvps and price both trading ccy: no fx
 
 
@@ -341,12 +346,15 @@ def test_raw_metrics_fx_non_positive_raises(fx):
 def test_raw_metrics_non_positive_cap(cap):
     m, _ = raw_metrics(ci(**{**FULL, "market_cap": cap}))
     assert m["ep"] is None and m["fcfp"] is None
+    assert m["bp"] is None  # v0.2.0: bp None outside BOOK_SECTORS
+    m, _ = raw_metrics(ci(sector="Utilities", **{**FULL, "market_cap": cap}))
     assert m["bp"] == approx(0.4, 1e-12)
 
 
 @pytest.mark.parametrize("price", [0.0, -5.0])
 def test_raw_metrics_non_positive_price(price):
-    m, _ = raw_metrics(ci(**{**FULL, "price": price}))
+    # v0.2.0: book sector so that bp would otherwise exist
+    m, _ = raw_metrics(ci(sector="Utilities", **{**FULL, "price": price}))
     assert m["bp"] is None
 
 
@@ -358,7 +366,9 @@ def test_raw_metrics_non_positive_total_assets(ta):
 
 
 def test_raw_metrics_negatives_kept():
-    m, _ = raw_metrics(ci(price=40.0, market_cap=8000.0, bvps=-2.0, ni_ttm=-50.0, ni_period_end=D,
+    # v0.2.0: sector Energy (a book sector) so that a negative bp is still produced
+    m, _ = raw_metrics(ci(sector="Energy", price=40.0, market_cap=8000.0, bvps=-2.0, ni_ttm=-50.0,
+                          ni_period_end=D,
                           cfo_ttm=-100.0, cfo_period_end=D, capex_ttm=200.0, capex_period_end=D))
     assert m["ep"] == approx(-0.00625, 1e-12)
     assert m["bp"] == approx(-0.05, 1e-12)
@@ -404,7 +414,8 @@ def test_raw_metrics_no_ttm_name():
                           total_debt=300.0, mom=0.1, vol=0.28, flags=frozenset({"NO_TTM"})))
     assert m["ep"] is None and m["fcfp"] is None and m["roe"] is None
     assert m["gpa"] is None and m["neg_accruals"] is None
-    assert m["bp"] == approx(0.48, 1e-12) and m["neg_leverage"] == approx(-0.3, 1e-12)
+    assert m["bp"] is None  # v0.2.0: bp None outside BOOK_SECTORS (Industrials)
+    assert m["neg_leverage"] == approx(-0.3, 1e-12)
 
 
 def test_raw_metrics_computed_for_ineligible():
@@ -444,15 +455,18 @@ G2 = [
 ]
 TICKERS = [i.ticker for i in G2]
 
+# v0.2.0: converted to G2-v2 (spec: "G2 under v0.2.0", all names market "US"). Only B/P
+# changes: Industrials bp None; Financials bp bounds/stats/z from F1-F4; I5 -> FEW_FACTORS.
+# The spec offers no switch that reproduces the v0.1.0 bp-in-all-sectors run.
 RAW = {  # METRICS order
-    "I1": (0.08, 0.4, 0.08, 0.18, 0.375, 0.0375, -0.2, 0.25, -0.19),
-    "I2": (-0.00625, -0.05, 0.15, N, 0.666667, 0.241667, -0.833333, 0.6, -0.15),
-    "I3": (0.116667, 0.833333, 0.183333, 0.17, N, 0.085714, -0.1, -0.35, -0.16),
-    "I4": (0.041667, 0.25, N, 0.11, N, 0.02, -0.4, 0.05, -0.3),
-    "I5": (N, 0.48, N, N, N, N, N, 0.1, -0.28),
-    "I6": (0.03, 0.5, 0.01, 0.08, N, 0.016667, -0.4, -0.05, -0.35),
-    "I7": (0.0125, 0.125, -0.00625, 0.06, N, -0.004167, -0.583333, -0.15, -0.45),
-    "X1": (-0.8, 6.0, -0.3, -0.5, N, 0.15, -0.9, -0.8, -1.2),
+    "I1": (0.08, N, 0.08, 0.18, 0.375, 0.0375, -0.2, 0.25, -0.19),
+    "I2": (-0.00625, N, 0.15, N, 0.666667, 0.241667, -0.833333, 0.6, -0.15),
+    "I3": (0.116667, N, 0.183333, 0.17, N, 0.085714, -0.1, -0.35, -0.16),
+    "I4": (0.041667, N, N, 0.11, N, 0.02, -0.4, 0.05, -0.3),
+    "I5": (N, N, N, N, N, N, N, 0.1, -0.28),
+    "I6": (0.03, N, 0.01, 0.08, N, 0.016667, -0.4, -0.05, -0.35),
+    "I7": (0.0125, N, -0.00625, 0.06, N, -0.004167, -0.583333, -0.15, -0.45),
+    "X1": (-0.8, N, -0.3, -0.5, N, 0.15, -0.9, -0.8, -1.2),
     "F1": (0.09, 0.7, N, 0.1, N, N, N, 0.06, -0.21),
     "F2": (0.075, 0.833333, N, 0.09, N, N, N, 0.08, -0.22),
     "F3": (0.066667, 1.333333, N, 0.05, N, N, N, -0.1, -0.3),
@@ -460,75 +474,76 @@ RAW = {  # METRICS order
     "F5": (N, N, N, N, N, N, N, 0.02, -0.26),
 }
 BOUNDS = {
-    "ep": (0.0021875, 0.1185), "bp": (0.0375, 1.083333), "fcfp": (-0.003, 0.176667),
+    "ep": (0.0021875, 0.1185), "bp": (0.388333, 1.258333), "fcfp": (-0.003, 0.176667),
     "roe": (0.054, 0.176), "gpa": (0.389583, 0.652083), "neg_accruals": (0.001042, 0.202679),
     "neg_leverage": (-0.770833, -0.125), "mom": (-0.295, 0.4075), "neg_vol": (-0.395, -0.1555),
 }
-CLIPPED = {  # explicit "a -> b" entries of the spec table
+CLIPPED = {  # explicit "a -> b" entries of the spec table (bp: G2-v2 bounds)
     ("I1", "roe"): 0.176, ("I1", "gpa"): 0.389583, ("I2", "ep"): 0.002188,
-    ("I2", "bp"): 0.0375, ("I2", "gpa"): 0.652083, ("I2", "neg_accruals"): 0.202679,
+    ("I2", "gpa"): 0.652083, ("I2", "neg_accruals"): 0.202679,
     ("I2", "neg_leverage"): -0.770833, ("I2", "mom"): 0.4075, ("I2", "neg_vol"): -0.1555,
     ("I3", "fcfp"): 0.176667, ("I3", "neg_leverage"): -0.125, ("I3", "mom"): -0.295,
     ("I7", "fcfp"): -0.003, ("I7", "neg_accruals"): 0.001042, ("I7", "neg_vol"): -0.395,
-    ("F3", "bp"): 1.083333, ("F3", "roe"): 0.054, ("F4", "ep"): 0.1185,
+    ("F3", "bp"): 1.258333, ("F4", "bp"): 0.388333, ("F3", "roe"): 0.054, ("F4", "ep"): 0.1185,
 }
-SECTOR_STATS = {  # (n, mean, std)
-    (FIN, "ep"): (4, 0.087542, 0.019733), (FIN, "bp"): (4, 0.7375, 0.270897),
+SECTOR_STATS = {  # (n, mean, std); v0.2.0: no Industrials bp, Financials bp from G2-v2
+    (FIN, "ep"): (4, 0.087542, 0.019733), (FIN, "bp"): (4, 0.795, 0.31247),
     (FIN, "roe"): (4, 0.101, 0.038118), (FIN, "mom"): (5, -0.038, 0.123028),
     (FIN, "neg_vol"): (5, -0.248, 0.031875),
-    (IND, "ep"): (6, 0.04717, 0.039703), (IND, "bp"): (7, 0.375119, 0.247668),
+    (IND, "ep"): (6, 0.04717, 0.039703),
     (IND, "fcfp"): (5, 0.082733, 0.072106), (IND, "roe"): (5, 0.1192, 0.046761),
     (IND, "gpa"): (2, 0.520833, 0.13125), (IND, "neg_accruals"): (6, 0.0606, 0.068892),
     (IND, "neg_leverage"): (6, -0.413194, 0.218216), (IND, "mom"): (7, 0.044643, 0.220107),
     (IND, "neg_vol"): (7, -0.2615, 0.087936),
 }
-Z = {  # METRICS order
-    "I1": (0.826879, 0.100461, -0.037907, 1.214696, N, -0.335312, 0.976989, 0.932987, 0.813089),
-    "I2": (-1.132969, -1.363193, 0.932891, N, N, 2.062346, -1.638923, 1.648547, 1.205419),
-    "I3": (1.750396, 1.850116, 1.302719, 1.086383, N, 0.364545, 1.320685, -1.543079, 1.154245),
-    "I4": (-0.138615, -0.505189, N, -0.196747, N, -0.589334, 0.060465, 0.024339, -0.437817),
-    "I5": (N, 0.423474, N, N, N, N, N, 0.251501, -0.210380),
-    "I6": (-0.432461, 0.504228, -1.008706, -0.838311, N, -0.637719, 0.060465, -0.429985, -1.006411),
-    "I7": (-0.873230, -1.009897, -1.188997, -1.266021, N, -0.864525, -0.779682, -0.884309,
+Z = {  # METRICS order (v0.1.0 G2 z; bp column as G2-v2)
+    "I1": (0.826879, N, -0.037907, 1.214696, N, -0.335312, 0.976989, 0.932987, 0.813089),
+    "I2": (-1.132969, N, 0.932891, N, N, 2.062346, -1.638923, 1.648547, 1.205419),
+    "I3": (1.750396, N, 1.302719, 1.086383, N, 0.364545, 1.320685, -1.543079, 1.154245),
+    "I4": (-0.138615, N, N, -0.196747, N, -0.589334, 0.060465, 0.024339, -0.437817),
+    "I5": (N, N, N, N, N, N, N, 0.251501, -0.210380),
+    "I6": (-0.432461, N, -1.008706, -0.838311, N, -0.637719, 0.060465, -0.429985, -1.006411),
+    "I7": (-0.873230, N, -1.188997, -1.266021, N, -0.864525, -0.779682, -0.884309,
            -1.518145),
     "X1": (N,) * 9,
-    "F1": (0.124582, -0.138429, N, -0.026234, N, N, N, 0.796564, 1.192166),
-    "F2": (-0.635577, 0.353762, N, -0.288576, N, N, N, 0.959128, 0.878438),
-    "F3": (-1.057888, 1.276621, N, -1.233006, N, N, N, -0.503948, -1.631385),
-    "F4": (1.568883, -1.491955, N, 1.547816, N, N, N, -1.723179, -0.062746),
+    "F1": (0.124582, -0.304029, N, -0.026234, N, N, N, 0.796564, 1.192166),
+    "F2": (-0.635577, 0.122678, N, -0.288576, N, N, N, 0.959128, 0.878438),
+    "F3": (-1.057888, 1.482809, N, -1.233006, N, N, N, -0.503948, -1.631385),
+    "F4": (1.568883, -1.301458, N, 1.547816, N, N, N, -1.723179, -0.062746),
     "F5": (N, N, N, N, N, N, N, 0.471436, -0.376473),
 }
 # V, Q, M, R, n, S, pct, mom_pct, signal, reason, model flags, labels
+# (G2-v2: V, S, pct, signal, value factor_pct from the G2-v2 table; Q, M, R, mom_pct as G2)
 FINAL = {
-    "I1": (0.296478, 0.618791, 0.932987, 0.813089, 4, 0.665336, 1.0, 0.909091, "BUY", N, set(),
-           "BHBH"),
-    "I2": (-0.521090, 0.211711, 1.648547, 1.205419, 4, 0.636147, 0.9, 1.0, "HOLD", N,
-           {"VETO_DISTRESS"}, "SHBB"),
-    "I3": (1.634410, 0.923871, -1.543079, 1.154245, 4, 0.542362, 0.8, 0.0, "HOLD", N,
-           {"VETO_MOMENTUM"}, "BBSB"),
-    "I4": (-0.321902, -0.241872, 0.024339, -0.437817, 4, -0.244313, 0.3, 0.545455, "HOLD", N,
-           {"FCF_PERIOD_MISMATCH"}, "SHHH"),
-    "I5": (0.423474, N, 0.251501, -0.210380, 3, 0.154865, 0.5, 0.818182, "HOLD", N, {"NO_TTM"},
-           "B-HH"),
-    "I6": (-0.312313, -0.471855, -0.429985, -1.006411, 4, -0.555141, 0.2, 0.363636, "SELL", N,
-           set(), "HHHS"),
-    "I7": (-1.024041, -0.970076, -0.884309, -1.518145, 4, -1.099143, 0.0, 0.181818, "SELL", N,
+    "I1": (0.394486, 0.618791, 0.932987, 0.813089, 4, 0.689838, 0.888889, 0.909091, "BUY", N,
+           set(), "BHBH"),
+    "I2": (-0.100039, 0.211711, 1.648547, 1.205419, 4, 0.741410, 1.0, 1.0, "HOLD", N,
+           {"VETO_DISTRESS"}, "HHBB"),
+    "I3": (1.526557, 0.923871, -1.543079, 1.154245, 4, 0.515399, 0.777778, 0.0, "HOLD", N,
+           set(), "BBSB"),
+    "I4": (-0.138615, -0.241872, 0.024339, -0.437817, 4, -0.198491, 0.333333, 0.545455, "HOLD",
+           N, {"FCF_PERIOD_MISMATCH"}, "HHHH"),
+    "I5": (N, N, 0.251501, -0.210380, 2, N, N, 0.818182, "NO_SIGNAL", "FEW_FACTORS", {"NO_TTM"},
+           "--HH"),
+    "I6": (-0.720583, -0.471855, -0.429985, -1.006411, 4, -0.657209, 0.222222, 0.363636, "HOLD",
+           N, set(), "SHHS"),
+    "I7": (-1.031113, -0.970076, -0.884309, -1.518145, 4, -1.100911, 0.0, 0.181818, "SELL", N,
            set(), "SSSS"),
     "X1": (N, N, N, N, 0, N, N, N, "NOT_ELIGIBLE", N, set(), "----"),
-    "F1": (-0.006924, -0.026234, 0.796564, 1.192166, 4, 0.488893, 0.7, 0.636364, "HOLD", N, set(),
-           "HHHB"),
-    "F2": (-0.140907, -0.288576, 0.959128, 0.878438, 4, 0.352021, 0.6, 0.727273, "HOLD", N, set(),
-           "HHBH"),
-    "F3": (0.109367, -1.233006, -0.503948, -1.631385, 4, -0.814743, 0.1, 0.272727, "SELL", N,
-           set(), "HSHS"),
-    "F4": (0.038464, 1.547816, -1.723179, -0.062746, 4, -0.049911, 0.4, 0.090909, "HOLD", N, set(),
-           "HBSH"),
+    "F1": (-0.089724, -0.026234, 0.796564, 1.192166, 4, 0.468193, 0.666667, 0.636364, "HOLD", N,
+           set(), "HHHB"),
+    "F2": (-0.256449, -0.288576, 0.959128, 0.878438, 4, 0.323135, 0.555556, 0.727273, "HOLD", N,
+           set(), "HHBH"),
+    "F3": (0.212461, -1.233006, -0.503948, -1.631385, 4, -0.788970, 0.111111, 0.272727, "SELL",
+           N, set(), "HSHS"),
+    "F4": (0.133713, 1.547816, -1.723179, -0.062746, 4, -0.026099, 0.444444, 0.090909, "HOLD", N,
+           set(), "HBSH"),
     "F5": (N, N, 0.471436, -0.376473, 2, N, N, 0.454545, "NO_SIGNAL", "FEW_FACTORS", {"NO_TTM"},
            "--HH"),
 }
 FACTOR_PCT = {
-    "value": {"I1": 0.8, "I2": 0.1, "I3": 1.0, "I4": 0.2, "I5": 0.9, "I6": 0.3, "I7": 0.0,
-              "F1": 0.5, "F2": 0.4, "F3": 0.7, "F4": 0.6},
+    "value": {"I1": 0.888889, "I2": 0.444444, "I3": 1.0, "I4": 0.333333, "I6": 0.111111,
+              "I7": 0.0, "F1": 0.555556, "F2": 0.222222, "F3": 0.777778, "F4": 0.666667},
     "quality": {"I1": 0.777778, "I2": 0.666667, "I3": 0.888889, "I4": 0.444444, "I6": 0.222222,
                 "I7": 0.111111, "F1": 0.555556, "F2": 0.333333, "F3": 0.0, "F4": 1.0},
     "momentum": {"I1": 0.818182, "I2": 1.0, "I3": 0.090909, "I4": 0.454545, "I5": 0.545455,
@@ -569,11 +584,13 @@ def test_g2_result_order_and_raw(g2):
 
 def test_g2_bounds(g2):
     _, stats, _ = g2
-    assert set(stats.bounds) == set(METRICS)
+    # v0.2.0: bounds keyed (market, metric)
+    assert set(stats.bounds) == {("US", m) for m in METRICS}
     for m, (lo, hi) in BOUNDS.items():
-        assert stats.bounds[m][0] == approx(lo) and stats.bounds[m][1] == approx(hi), m
-    assert stats.bounds["ep"][0] == pytest.approx(0.002187500000000002, abs=1e-12)
-    assert stats.bounds["mom"][1] == pytest.approx(0.40749999999999975, abs=1e-12)
+        b = stats.bounds[("US", m)]
+        assert b[0] == approx(lo) and b[1] == approx(hi), m
+    assert stats.bounds[("US", "ep")][0] == pytest.approx(0.002187500000000002, abs=1e-12)
+    assert stats.bounds[("US", "mom")][1] == pytest.approx(0.40749999999999975, abs=1e-12)
 
 
 def test_g2_winsorized(g2):
@@ -590,9 +607,10 @@ def test_g2_winsorized(g2):
 
 def test_g2_sector_stats(g2):
     _, stats, _ = g2
-    assert set(stats.sectors) == set(SECTOR_STATS)
+    # v0.2.0: sector stats keyed (market, sector, metric)
+    assert set(stats.sectors) == {("US", *k) for k in SECTOR_STATS}
     for key, (n, mean, std) in SECTOR_STATS.items():
-        s = stats.sectors[key]
+        s = stats.sectors[("US", *key)]
         assert s.n == n and s.mean == approx(mean) and s.std == approx(std), key
         assert s.used is (key != (IND, "gpa")), key
 
@@ -645,7 +663,9 @@ def test_g2_outsider_shape(g2):
 def test_g2_checks_arithmetic(g2):
     by, _, _ = g2
     assert by["I1"].quality == approx((1.214696 - 0.335312 + 0.976989) / 3)
-    assert by["I5"].score == approx((0.423474 + 0.251501 - 0.210380) / 3)
+    # v0.2.0: I5 has no value metric left (FEW_FACTORS); G2-v2 check of I1's V instead
+    assert by["I5"].score is None
+    assert by["I1"].value == approx((0.826879 - 0.037907) / 2)
 
 
 def test_g2_properties_score_mean_and_neutrality(g2):
@@ -672,12 +692,14 @@ def test_g2b_default_min_names():
         assert (by[t].signal, by[t].no_signal_reason, by[t].n_factors) == \
             ("NO_SIGNAL", "FEW_FACTORS", 2), t
         assert by[t].score is None and by[t].pct is None
-    for key in ((FIN, "ep"), (FIN, "bp"), (FIN, "roe")):
+    for key in (("US", FIN, "ep"), ("US", FIN, "bp"), ("US", FIN, "roe")):  # v0.2.0: keys
         assert stats.sectors[key].used is False
-    exp = {"I1": ("BUY", 1.0, set()), "I2": ("HOLD", 0.833333, {"VETO_DISTRESS"}),
-           "I3": ("HOLD", 0.666667, set()), "I4": ("HOLD", 0.333333, {"FCF_PERIOD_MISMATCH"}),
-           "I5": ("HOLD", 0.5, {"NO_TTM"}), "I6": ("SELL", 0.166667, set()),
-           "I7": ("SELL", 0.0, set())}
+    # v0.2.0: the spec prints no G2b-v2 table; derived from the G2-v2 S values (Industrials z
+    # unchanged, I5 FEW_FACTORS): P = I1-I4, I6, I7 (divisor 5), ranked by S.
+    assert (by["I5"].signal, by["I5"].no_signal_reason) == ("NO_SIGNAL", "FEW_FACTORS")
+    exp = {"I1": ("BUY", 0.8, set()), "I2": ("HOLD", 1.0, {"VETO_DISTRESS"}),
+           "I3": ("HOLD", 0.6, set()), "I4": ("HOLD", 0.4, {"FCF_PERIOD_MISMATCH"}),
+           "I6": ("SELL", 0.2, set()), "I7": ("SELL", 0.0, set())}
     for t, (sig, pct, fl) in exp.items():
         assert by[t].signal == sig and by[t].pct == approx(pct) and by[t].flags == frozenset(fl), t
         assert by[t].score == approx(FINAL[t][5]), t
@@ -687,7 +709,10 @@ def test_g2b_default_min_names():
 def test_g2c_x1_eligible_moves_bounds():
     inputs = [dataclasses.replace(i, eligible=True) if i.ticker == "X1" else i for i in G2]
     _, stats = run_composite(inputs, min_sector_names=3)
-    assert stats.bounds["bp"][0] == approx(0.04625) and stats.bounds["bp"][1] == approx(3.433333)
+    # v0.2.0: X1 (Industrials) has no bp, so the bp bounds stay at G2-v2; its exclusion is
+    # visible in the ep bounds instead (lower bound -0.403125 vs 0.0021875; QA-derived).
+    assert stats.bounds[("US", "bp")] == (approx(0.388333), approx(1.258333))
+    assert stats.bounds[("US", "ep")][0] == approx(-0.403125)
 
 
 def _same(a, b):
@@ -734,8 +759,9 @@ def test_g2c_i1_short_history():
     assert (i1.signal, i1.no_signal_reason) == ("NO_SIGNAL", "SHORT_HISTORY")
     assert i1.n_factors == 0 and i1.winsorized == {} and i1.z == {} and i1.score is None
     assert i1.metrics["ep"] == approx(0.08)
-    assert stats.sectors[(IND, "bp")].n == 6
-    assert (IND, "gpa") in stats.sectors and stats.sectors[(IND, "gpa")].n == 1
+    # v0.2.0: keys (market, sector, metric); Industrials has no bp -> check ep (6 -> 5)
+    assert stats.sectors[("US", IND, "ep")].n == 5
+    assert ("US", IND, "gpa") in stats.sectors and stats.sectors[("US", IND, "gpa")].n == 1
     ref, ref_stats = run_composite([i for i in G2 if i.ticker != "I1"], min_sector_names=3)
     for r in ref:
         _same(r, by[r.ticker])

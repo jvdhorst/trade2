@@ -159,7 +159,7 @@ def assert_fit_equal(a, b, rel=REL, ignore_n_scored=False):
 
 
 def test_model_version():
-    assert MODEL_VERSION == "peer_regression/0.1.0"
+    assert MODEL_VERSION == "peer_regression/0.2.0"  # v0.2.0: revision round v2
 
 
 def test_constants():

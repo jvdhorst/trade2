@@ -130,9 +130,16 @@ def ni_common_ttm(con, ticker: str, as_of: date):
     """TTM NI to common: per source, then the latest quarter end wins (EDGAR on ties).
 
     Returns (TTMResult, source, currency)."""
+    return flow_ttm(con, ticker, NI_COMMON_Q, as_of)
+
+
+def flow_ttm(con, ticker: str, item: str, as_of: date):
+    """TTM of any flow item (spec ttm.md §5.3): per source, latest period_end wins, EDGAR on ties.
+
+    Returns (TTMResult, source, currency)."""
     rows = con.execute(
         "SELECT source, period_end, filed_date, value, unit FROM fundamentals "
-        "WHERE ticker=? AND item=? AND filed_date<=?", [ticker, NI_COMMON_Q, as_of]).fetchall()
+        "WHERE ticker=? AND item=? AND filed_date<=?", [ticker, item, as_of]).fetchall()
     best: tuple[ttm_mod.TTMResult, str | None, str | None] = (
         ttm_mod.TTMResult(None, flags=frozenset({ttm_mod.NO_TTM})), None, None)
     for src in SOURCE_PRIORITY:

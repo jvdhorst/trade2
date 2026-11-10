@@ -46,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     pc.add_argument("--issuer", action="store_true",
                     help="compare against issuer BVPS and ROE (universe/issuer_sources.csv)")
     pb = sub.add_parser("backtest", help="Phase 8 backtest (spec docs/models/backtest.md)")
-    pb.add_argument("action", choices=["build", "run", "report"])
+    pb.add_argument("action", choices=["build", "run", "report", "benchmarks"])
     pb.add_argument("--bt-db", default="data/backtest.duckdb")
     pb.add_argument("--market", dest="universe", choices=["US", "TSX"], default="US")
     pb.add_argument("--workers", type=int, default=4)
@@ -105,12 +105,16 @@ def main(argv: list[str] | None = None) -> int:
         for k, v in sorted(info["skipped"].items()):
             print(f"  skipped {k}: {v}")
         if not args.no_signals:
+            from .benchmarks import benchmark_table, header_lines
             from .engine import run_signals
-            from .report.screen import signal_summary, write_signals
+            from .report.screen import signal_summary, write_benchmarks, write_signals
 
             sdf, sinfo = run_signals(con, args.as_of, tickers,
                                      liquidity=load_config(args.liquidity), csm_path=args.csm)
-            s_csv, s_pq = write_signals(sdf, args.as_of, args.out)
+            btab = benchmark_table(con, args.as_of)
+            b_path = write_benchmarks(btab, args.as_of, args.out)
+            s_csv, s_pq = write_signals(sdf, args.as_of, args.out, header=header_lines(btab))
+            print(f"benchmarks -> {b_path}")
             print(f"signals run {sinfo['run_id']}: {len(sdf)} rows -> {s_csv}, {s_pq}")
             for s, f in sorted(sinfo["fits"].items()):
                 r2 = "n/a" if f.r2 is None else f"{f.r2:.3f}"

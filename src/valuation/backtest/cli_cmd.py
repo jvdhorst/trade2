@@ -27,6 +27,19 @@ def backtest_cmd(args) -> int:
         print(json.dumps(stats, indent=1, default=str))
         return 0
 
+    if args.action == "benchmarks":  # benchmark series for the excess-return column (P8-10)
+        from datetime import date
+
+        from ..benchmarks import ingest_benchmarks
+        from ..providers.yahoo import YahooProvider
+
+        con = runner.connect_bt(bt_path)
+        errs = ingest_benchmarks(con, YahooProvider(RawCache()), date(2012, 6, 1), args.today)
+        n = con.execute("SELECT key, count(*), min(date), max(date) FROM benchmarks_daily "
+                        "GROUP BY 1 ORDER BY 1").fetchall()
+        print("\n".join(f"{k}: {c} bars {a} .. {b}" for k, c, a, b in n), errs or "")
+        return 0
+
     con = runner.connect_bt(bt_path)
     dates = bte.rebalance_dates(bte.BT_START, args.today)
     if args.action == "run":

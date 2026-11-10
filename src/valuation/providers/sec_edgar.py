@@ -13,12 +13,20 @@ from datetime import date, timedelta
 import requests
 
 from .base import (
+    CAPEX_Q,
+    CASH,
+    CFO_Q,
+    EBIT_Q,
     GOODWILL,
+    GROSS_PROFIT_Q,
     INTANGIBLES,
     NCI,
     NI_COMMON_Q,
     PREFERRED,
+    REVENUE_Q,
     SHARES,
+    TOTAL_ASSETS,
+    TOTAL_DEBT,
     TOTAL_EQUITY,
     Fact,
     RawCache,
@@ -59,6 +67,32 @@ CONCEPTS = {
     "IntangibleAssetsNetExcludingGoodwill": "USD",
     "CommonStockSharesOutstanding": "shares",
 }
+# Data batch 2 balance-sheet concepts (spec docs/models/ttm.md §5.2).
+ASSETS = "Assets"
+CASH_CHAIN = ("CashAndCashEquivalentsAtCarryingValue",
+              "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents", "Cash")
+ST_DEBT_CHAIN = ("ShortTermBorrowings", "CommercialPaper")
+DEBT_CONCEPTS = ("DebtLongtermAndShorttermCombinedAmount", "LongTermDebtNoncurrent", "DebtCurrent",
+                 "LongTermDebt", "LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligations",
+                 "LongTermDebtAndCapitalLeaseObligationsCurrent", *ST_DEBT_CHAIN)
+CONCEPTS.update({c: "USD" for c in (ASSETS, *CASH_CHAIN, *DEBT_CONCEPTS)})
+
+
+def total_debt(at) -> float | None:
+    """Rules D1-D5 of ttm.md §5.2 on one filing's instant values (`at(concept)`)."""
+    st = _first(at, ST_DEBT_CHAIN) or 0.0
+    if (v := at("DebtLongtermAndShorttermCombinedAmount")) is not None:  # D1
+        return v
+    ltn = at("LongTermDebtNoncurrent")
+    if ltn is not None and (dc := at("DebtCurrent")) is not None:  # D2
+        return ltn + dc
+    if (v := at("LongTermDebt")) is not None:  # D3
+        return v + st
+    if ltn is not None:  # D4
+        return ltn + (at("LongTermDebtCurrent") or 0.0) + st
+    if (v := at("LongTermDebtAndCapitalLeaseObligations")) is not None:  # D5
+        return v + (at("LongTermDebtAndCapitalLeaseObligationsCurrent") or 0.0) + st
+    return None
 
 
 # Issuers tag preferred equity differently (JPM: liquidation preference only).
@@ -78,7 +112,22 @@ PREF_DIV_CHAIN = (
     "DividendsPreferredStock",
 )
 NI_CONCEPTS = (NI_AVAILABLE, NI_TOTAL, *PREF_DIV_CHAIN)
-TRIM_CONCEPTS = (*CONCEPTS, *NI_CONCEPTS)
+# Data batch 2 flow chains (spec docs/models/ttm.md §5.1), priority order.
+REVENUE_CHAIN = ("Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
+                 "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet",
+                 "RevenuesNetOfInterestExpense")
+COST_CHAIN = ("CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold")
+FLOW_CHAINS: dict[str, tuple[str, ...]] = {
+    CFO_Q: ("NetCashProvidedByUsedInOperatingActivities",
+            "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"),
+    CAPEX_Q: ("PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"),
+    REVENUE_Q: REVENUE_CHAIN,
+    GROSS_PROFIT_Q: ("GrossProfit",),  # + derived REV - COST (chain 2)
+    EBIT_Q: ("OperatingIncomeLoss",),
+}
+FLOW_CONCEPTS = tuple(dict.fromkeys(
+    [c for cs in FLOW_CHAINS.values() for c in cs] + list(COST_CHAIN)))
+TRIM_CONCEPTS = tuple(dict.fromkeys((*CONCEPTS, *NI_CONCEPTS, *FLOW_CONCEPTS)))
 
 
 def _first(at, concepts):
@@ -139,6 +188,9 @@ def parse_companyfacts(ticker: str, payload: dict) -> list[Fact]:
             total = None if parent is None else parent + (mi or 0.0)
         shares = cover_shares.get(accn) or at("CommonStockSharesOutstanding")
         items = {
+            TOTAL_ASSETS: at(ASSETS),
+            CASH: _first(at, CASH_CHAIN),
+            TOTAL_DEBT: total_debt(at),
             TOTAL_EQUITY: total,
             NCI: mi,
             PREFERRED: _first(at, PREFERRED_CHAIN),
@@ -194,49 +246,90 @@ def _quarters_from_durations(vals: dict[tuple[date, date], float]) -> dict[date,
     return {e: v for e, (_s, v) in q.items()}
 
 
-def parse_quarterly_ni(ticker: str, payload: dict) -> list[Fact]:
-    """Point-in-time discrete-quarter NI to common (ni_common_q), spec docs/models/ttm.md §1."""
-    gaap = payload.get("facts", {}).get("us-gaap", {})
-    # concept -> (start, end) -> [(filed, accn, val)]
-    facts: dict[str, dict[tuple[date, date], list[tuple[date, str, float]]]] = {}
-    filed_dates: set[date] = set()
-    for concept in NI_CONCEPTS:
-        per: dict[tuple[date, date], list] = defaultdict(list)
+def _durations(gaap: dict, concepts) -> tuple[dict, list[date]]:
+    """concept -> list of (filed, accn, (start, end), val) sorted by (filed, accn), and the sorted
+    distinct filed dates. Only duration facts of the accepted forms (spec ttm.md §1)."""
+    out: dict[str, list] = {}
+    filed: set[date] = set()
+    for concept in concepts:
+        rows = []
         for f in gaap.get(concept, {}).get("units", {}).get("USD", []):
             if f.get("form") not in FORMS or not f.get("start"):
                 continue
             fd = date.fromisoformat(f["filed"])
-            per[(date.fromisoformat(f["start"]), date.fromisoformat(f["end"]))].append(
-                (fd, f.get("accn", ""), float(f["val"])))
-            filed_dates.add(fd)
-        for versions in per.values():
-            versions.sort()
-        facts[concept] = per
+            rows.append((fd, f.get("accn", ""),
+                         (date.fromisoformat(f["start"]), date.fromisoformat(f["end"])),
+                         float(f["val"])))
+            filed.add(fd)
+        rows.sort(key=lambda r: (r[0], r[1]))
+        out[concept] = rows
+    return out, sorted(filed)
 
-    def snapshot(concept: str, f: date) -> dict[tuple[date, date], float]:
-        out = {}
-        for period, versions in facts[concept].items():
-            known = [v for v in versions if v[0] <= f]
-            if known:
-                out[period] = known[-1][2]  # latest filed, ties -> larger accn
-        return out
 
+def _emit_quarters(ticker: str, item: str, gaap: dict, concepts, chains) -> list[Fact]:
+    """Snapshots in increasing filed date (latest filed <= f per (concept, period), ties -> larger
+    accn); each chain -> discrete quarters on its own; per quarter end the first chain that has it.
+    A fact is emitted when a quarter first appears and whenever its value changes."""
+    rows, filed_dates = _durations(gaap, concepts)
+    snap: dict[str, dict[tuple[date, date], float]] = {c: {} for c in concepts}
+    pos = dict.fromkeys(concepts, 0)
     emitted: dict[date, float] = {}
     out: list[Fact] = []
-    for f in sorted(filed_dates):
-        chain1 = _quarters_from_durations(snapshot(NI_AVAILABLE, f))
-        ni = snapshot(NI_TOTAL, f)
-        prefs = [snapshot(c, f) for c in PREF_DIV_CHAIN]
-        chain2_vals = {}
-        for period, v in ni.items():
-            pref = next((p[period] for p in prefs if period in p), 0.0)
-            chain2_vals[period] = v - pref
-        chain2 = _quarters_from_durations(chain2_vals)
-        for end in sorted(set(chain1) | set(chain2)):
-            v = chain1[end] if end in chain1 else chain2[end]
+    for f in filed_dates:
+        for c in concepts:  # advance every concept's snapshot to filed date f
+            rs, i = rows[c], pos[c]
+            while i < len(rs) and rs[i][0] <= f:
+                snap[c][rs[i][2]] = rs[i][3]
+                i += 1
+            pos[c] = i
+        quarters = [_quarters_from_durations(chain(snap)) for chain in chains]
+        for end in sorted(set().union(*quarters)):
+            v = next(q[end] for q in quarters if end in q)
             if end not in emitted or emitted[end] != v:
                 emitted[end] = v
-                out.append(Fact(ticker, end, f, NI_COMMON_Q, v, "USD", SOURCE, False))
+                out.append(Fact(ticker, end, f, item, v, "USD", SOURCE, False))
+    return out
+
+
+def _ni_chain2(snap) -> dict[tuple[date, date], float]:
+    out = {}
+    for period, v in snap[NI_TOTAL].items():
+        pref = next((snap[c][period] for c in PREF_DIV_CHAIN if period in snap[c]), 0.0)
+        out[period] = v - pref
+    return out
+
+
+def _gp_chain2(snap) -> dict[tuple[date, date], float]:
+    """REV - COST for periods where both exist (no default for either)."""
+    out = {}
+    periods = set().union(*(snap[c] for c in REVENUE_CHAIN))
+    for period in periods:
+        rev = next((snap[c][period] for c in REVENUE_CHAIN if period in snap[c]), None)
+        cost = next((snap[c][period] for c in COST_CHAIN if period in snap[c]), None)
+        if rev is not None and cost is not None:
+            out[period] = rev - cost
+    return out
+
+
+def parse_quarterly_ni(ticker: str, payload: dict) -> list[Fact]:
+    """Point-in-time discrete-quarter NI to common (ni_common_q), spec docs/models/ttm.md §1."""
+    gaap = payload.get("facts", {}).get("us-gaap", {})
+    return _emit_quarters(ticker, NI_COMMON_Q, gaap, NI_CONCEPTS,
+                          [lambda s: s[NI_AVAILABLE], _ni_chain2])
+
+
+def parse_quarterly_flows(ticker: str, payload: dict) -> list[Fact]:
+    """Data batch 2 flow items (cfo_q, capex_q, revenue_q, gross_profit_q, ebit_q), ttm.md §5.1.
+    Capex is stored as reported (EDGAR PaymentsTo... = positive outflow)."""
+    gaap = payload.get("facts", {}).get("us-gaap", {})
+    out: list[Fact] = []
+    for item, chain in FLOW_CHAINS.items():
+        chains = [lambda s, c=c: s[c] for c in chain]
+        concepts = chain
+        if item == GROSS_PROFIT_Q:
+            chains.append(_gp_chain2)
+            concepts = (*chain, *REVENUE_CHAIN, *COST_CHAIN)
+        out += _emit_quarters(ticker, item, gaap, concepts, chains)
     return out
 
 
@@ -275,7 +368,7 @@ class EdgarProvider:
 
     def companyfacts(self, cik: str) -> dict:
         cik = str(cik).zfill(10)
-        key = f"CIK{cik}_v2"  # v2: trimmed set includes the NI concepts
+        key = f"CIK{cik}_v3"  # v3: trimmed set includes data batch 2 (ttm.md §5)
         raw = self.cache.get(SOURCE, key)
         if raw is None:
             self.limiter.wait()

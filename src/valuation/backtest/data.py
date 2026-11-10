@@ -266,7 +266,8 @@ def lag_estimated_filings(con, days: int = EXTRA_LAG_DAYS) -> int:
 def edgar_facts(ep, ticker: str, cik: str):
     raw = ep.companyfacts(cik)
     return (sec_edgar.parse_companyfacts(ticker, raw)
-            + sec_edgar.parse_quarterly_ni(ticker, raw))
+            + sec_edgar.parse_quarterly_ni(ticker, raw)
+            + sec_edgar.parse_quarterly_flows(ticker, raw))
 
 
 def frames_for_names(ep, years=range(2012, 2026)) -> list[dict]:

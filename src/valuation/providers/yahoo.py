@@ -14,12 +14,20 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from .base import (
+    CAPEX_Q,
+    CASH,
+    CFO_Q,
+    EBIT_Q,
     GOODWILL,
+    GROSS_PROFIT_Q,
     INTANGIBLES,
     NCI,
     NI_COMMON_Q,
     PREFERRED,
+    REVENUE_Q,
     SHARES,
+    TOTAL_ASSETS,
+    TOTAL_DEBT,
     TOTAL_EQUITY,
     Dividend,
     Fact,
@@ -99,6 +107,9 @@ def parse_balance_sheet(ticker: str, bs: dict[str, dict[str, Any]], currency: st
             GOODWILL: g.get("Goodwill"),
             INTANGIBLES: g.get("Other Intangible Assets"),
             SHARES: g.get("Ordinary Shares Number"),
+            TOTAL_ASSETS: g.get("Total Assets"),
+            TOTAL_DEBT: g.get("Total Debt"),
+            CASH: g.get("Cash And Cash Equivalents"),
         }
         for item, v in items.items():
             if v is not None:
@@ -142,12 +153,25 @@ TS_TYPES = {
     "quarterlyGoodwill": "Goodwill",
     "quarterlyOtherIntangibleAssets": "Other Intangible Assets",
     "quarterlyOrdinarySharesNumber": "Ordinary Shares Number",
+    # data batch 2 (spec docs/models/ttm.md §5.2)
+    "quarterlyTotalAssets": "Total Assets",
+    "quarterlyTotalDebt": "Total Debt",
+    "quarterlyCashAndCashEquivalents": "Cash And Cash Equivalents",
 }
 SPARK_MAX = 20  # Yahoo rejects more symbols per spark call
 # Income-statement types (spec docs/models/ttm.md §2); annual only identifies fiscal year ends.
 NI_QUARTERLY = "quarterlyNetIncomeCommonStockholders"
 NI_ANNUAL = "annualNetIncomeCommonStockholders"
-TS_FLOW_TYPES = (NI_QUARTERLY, NI_ANNUAL)
+# Data batch 2 flows (spec docs/models/ttm.md §5.1): type -> (item, sign). Capex is reported as a
+# negative cash flow and stored as a positive outflow.
+FLOW_TYPES = {
+    "quarterlyOperatingCashFlow": (CFO_Q, 1.0),
+    "quarterlyCapitalExpenditure": (CAPEX_Q, -1.0),
+    "quarterlyTotalRevenue": (REVENUE_Q, 1.0),
+    "quarterlyGrossProfit": (GROSS_PROFIT_Q, 1.0),
+    "quarterlyOperatingIncome": (EBIT_Q, 1.0),
+}
+TS_FLOW_TYPES = (NI_QUARTERLY, NI_ANNUAL, *FLOW_TYPES)
 
 
 def _ts_points(payload: dict, type_: str) -> list[dict]:
@@ -159,23 +183,35 @@ def _ts_points(payload: dict, type_: str) -> list[dict]:
     return pts
 
 
-def parse_quarterly_ni(ticker: str, ts_payload: dict) -> list[Fact]:
-    """Discrete-quarter NI to common; filed date estimated (+90 days for fiscal Q4, else +45),
-    capped at the download date stamped in the payload (`_fetched`)."""
+def _quarterly(ticker: str, ts_payload: dict, type_: str, item: str, sign: float) -> list[Fact]:
+    """Discrete quarters of one timeseries type; filed date estimated (+90 days for a fiscal Q4,
+    else +45), capped at the download date stamped in the payload (`_fetched`). Spec ttm.md §2."""
     fy_ends = {v["asOfDate"] for v in _ts_points(ts_payload, NI_ANNUAL)}
     fetched = ts_payload.get("_fetched")
     observed = date.fromisoformat(fetched) if fetched else None
     facts = []
-    for v in _ts_points(ts_payload, NI_QUARTERLY):
+    for v in _ts_points(ts_payload, type_):
         pe = date.fromisoformat(v["asOfDate"][:10])
         lag = ANNUAL_FILING_LAG_DAYS if v["asOfDate"] in fy_ends else FILING_LAG_DAYS
         filed = pe + timedelta(days=lag)
         if observed is not None:  # it was in a response downloaded that day: public by then
             filed = min(filed, observed)
-        facts.append(Fact(ticker, pe, filed, NI_COMMON_Q,
-                          float(v["reportedValue"]["raw"]), v.get("currencyCode") or "", SOURCE,
-                          True))
+        facts.append(Fact(ticker, pe, filed, item, sign * float(v["reportedValue"]["raw"]),
+                          v.get("currencyCode") or "", SOURCE, True))
     return facts
+
+
+def parse_quarterly_ni(ticker: str, ts_payload: dict) -> list[Fact]:
+    """Discrete-quarter NI to common (spec ttm.md §2)."""
+    return _quarterly(ticker, ts_payload, NI_QUARTERLY, NI_COMMON_Q, 1.0)
+
+
+def parse_quarterly_flows(ticker: str, ts_payload: dict) -> list[Fact]:
+    """Data batch 2 flow items (spec ttm.md §5.1); capex sign flipped to a positive outflow."""
+    out: list[Fact] = []
+    for type_, (item, sign) in FLOW_TYPES.items():
+        out += _quarterly(ticker, ts_payload, type_, item, sign)
+    return out
 
 
 def parse_chart(ticker: str, payload: dict) -> tuple[list[PriceBar], list[Dividend]]:
@@ -396,7 +432,7 @@ class YahooProvider:
 
     def fundamentals(self, ticker: str, fallback_currency: str | None) -> list[Fact]:
         """Quarterly balance-sheet + NI facts via fundamentals-timeseries (fields we use only)."""
-        key = f"{ticker}.timeseries_v2"  # v2: adds the NI types
+        key = f"{ticker}.timeseries_v3"  # v3: data batch 2 (ttm.md §5)
         raw = self.cache.get(SOURCE, key)
         if raw is None:
             p2 = int(time.time())
@@ -409,7 +445,7 @@ class YahooProvider:
         if not bs:
             raise ProviderError(f"{ticker}: no fundamentals from timeseries")
         return (parse_balance_sheet(ticker, bs, ccy or fallback_currency or "")
-                + parse_quarterly_ni(ticker, raw))
+                + parse_quarterly_ni(ticker, raw) + parse_quarterly_flows(ticker, raw))
 
     def _fallback_profile(self, ticker: str) -> dict:
         """Trading currency from the chart API, statement currency from the timeseries API.

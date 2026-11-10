@@ -1,7 +1,8 @@
-# Model spec: Quality-adjusted peer P/B (`peer_regression`, v0.1.0) — Model B, book branch
+# Model spec: Quality-adjusted peer P/B (`peer_regression`, v0.2.0) — Model B, book branch (diagnostic only)
 
 Owner: AN · Tests: QA (`tests/unit/test_peer_regression_spec.py`) · Code: `src/valuation/models/peer_regression.py` ·
 Source: proposal `docs/models/proposals/buy_hold_sell.md` §0, §3 (task P7-1). The EV/Sales branch is Phase 10.
+**v0.2.0: status `diagnostic`** (§Revision v0.2.0): shown for context, never counted toward the Phase 10 gate or vote.
 
 ## Purpose
 *Is this stock's P/B high or low **for its ROE**, compared with its sector today?* Per GICS sector, a robust line
@@ -14,7 +15,9 @@ says nothing about whether the whole sector is cheap, and it doesn't depend on t
 
 ## Constants
 `MIN_FIT = 12`, `MIN_R2 = 0.20`, `WINSOR = (5, 95)`, `BUY_PCT = 0.20`, `SELL_PCT = 0.80`, `BUY_UPSIDE = 0.15`,
-`SELL_UPSIDE = -0.15`, `BOOK_SECTORS = frozenset({"Financials", "Utilities", "Real Estate", "Energy", "Materials"})`.
+`SELL_UPSIDE = -0.15`, `BOOK_SECTORS = frozenset({"Financials", "Utilities", "Real Estate", "Energy", "Materials"})`,
+(v0.2.0) `EV_SUB_INDUSTRIES = frozenset({"Transaction & Payment Processing Services", "Financial Exchanges & Data"})`
+(exact GICS sub-industry names, as in the backtest's Q4 diagnostic), `STATUS = "diagnostic"`.
 
 ## Inputs (`PBObs`, one per ticker, all at the same `as_of`)
 | Field | Meaning |
@@ -26,6 +29,7 @@ says nothing about whether the whole sector is cheap, and it doesn't depend on t
 | `eligible` | bool \| None; anything but `True` → `NOT_ELIGIBLE` |
 | `flags` | frozenset, passed through (default ∅) |
 | `needs_csm` | True when Model A's reason is `NEEDS_CSM_INPUT` (default False) |
+| `sub_industry` | v0.2.0: GICS sub-industry (exact name) or None (default None; TSX names have none) |
 
 Decision: Model B uses exactly Model A's book and ROE so both models see the same company (MFC's P/B uses adjusted
 book). P/B and ROE are currency-free, so TSX and US names are pooled per sector. There is no P/B cap in Model B
@@ -34,8 +38,9 @@ book). P/B and ROE are currency-free, so TSX and US names are pooled per sector.
 ## Sets (per book sector s)
 ```
 pb_i      = price_i / bvps_i                                   (only when bvps_i > 0)
-fit set   F = {i in s : eligible is True, not needs_csm, bvps > 0, roe is not None, roe >= 0}
-scored S  = {i in s : eligible is True, not needs_csm, bvps > 0, roe is not None}       (F ⊆ S; adds roe < 0)
+ev_name   = sub_industry ∈ EV_SUB_INDUSTRIES                                          (v0.2.0)
+fit set   F = {i in s : eligible is True, not ev_name, not needs_csm, bvps > 0, roe is not None, roe >= 0}
+scored S  = {i in s : eligible is True, not ev_name, not needs_csm, bvps > 0, roe is not None}  (F ⊆ S; adds roe < 0)
 n_fit = |F|, n_scored = |S|
 ```
 
@@ -82,7 +87,7 @@ Ineligible names with data get fitted_pb, fair_value, residual and implied_upsid
 |---|---|---|
 | 1 | `NOT_ELIGIBLE` | `eligible is not True` (no_signal_reason None) |
 | 2 | `NO_SIGNAL` / `NO_SECTOR` | sector None or `""` |
-| 3 | `NO_SIGNAL` / `EV_BRANCH_PENDING` | sector not in BOOK_SECTORS (Phase 10) |
+| 3 | `NO_SIGNAL` / `EV_BRANCH_PENDING` | sector not in BOOK_SECTORS, or (v0.2.0) `sub_industry ∈ EV_SUB_INDUSTRIES` (Phase 10) |
 | 4 | `NO_SIGNAL` / `NEEDS_CSM_INPUT` | needs_csm |
 | 5 | `NO_SIGNAL` / `NEG_BOOK` | bvps None or ≤ 0 |
 | 6 | `NO_SIGNAL` / `NO_ROE` | roe None (covers NO_TTM, NEG_AVG_EQUITY, CCY_MISMATCH upstream) |
@@ -147,7 +152,17 @@ U17, U18 keep their earlier reasons (precedence).
 slope **1.1467076579307753**, intercept **0.29643019419066896**, r2 **−0.13506065275017787** → status **LOW_R2**; all
 12 names NO_SIGNAL / NO_FIT with `n_fit = 12` and `r2` as above in each PBResult.
 
+**G5 (v0.2.0) payments / exchanges leave the book branch.** G2 plus `U19` (Financials, sub_industry
+`"Financial Exchanges & Data"`, price 300, bvps 20, roe 0.45, eligible) and `U20` (Financials, sub_industry
+`"Transaction & Payment Processing Services"`, price 400, bvps 10, roe 0.60, eligible) → both **NO_SIGNAL /
+EV_BRANCH_PENDING**, every per-name output None except `pb` (15.0, 40.0); the Financials SectorFit and every other row
+are **identical to G2** (n_fit 14, slope 7.640957345191646). In v0.1.0 they would have entered F (n_fit 16) and
+steepened the slope, the P7-14 distortion. `sub_industry` `"Asset Management & Custody Banks"` or None → unchanged
+v0.1.0 treatment.
+
 ## Property expectations
+- v0.2.0: adding a name with `sub_industry ∈ EV_SUB_INDUSTRIES` (any values) never changes any SectorFit or any other
+  name's result.
 - Multiplying every price in a sector by k > 0: intercept → intercept + ln k (G2 × 2: 0.39617492265580084 =
   −0.2969722579041446 + ln 2), slope, r2, residuals, resid_pct, upside and signals unchanged.
 - Adding an ineligible, a needs_csm, a NEG_BOOK, a roe-None or a non-book-sector name never changes any SectorFit.
@@ -159,22 +174,23 @@ slope **1.1467076579307753**, intercept **0.29643019419066896**, r2 **−0.13506
 ## API contract (SW and QA)
 ```python
 from valuation.models.peer_regression import (
-    PBObs, SectorFit, PBResult, MIN_FIT, MIN_R2, WINSOR, BOOK_SECTORS, MODEL_VERSION,
+    PBObs, SectorFit, PBResult, MIN_FIT, MIN_R2, WINSOR, BOOK_SECTORS, EV_SUB_INDUSTRIES, STATUS, MODEL_VERSION,
     theil_sen, winsor_bounds, fit_sector, map_signal, run_peer_regression,
 )
 ```
 - `theil_sen(x, y) -> tuple[float, float]` (slope, intercept); `winsor_bounds(x) -> tuple[float, float]`.
-- `PBObs(ticker, sector, price, bvps, roe, eligible, flags=frozenset(), needs_csm=False)`: frozen dataclass.
+- `PBObs(ticker, sector, price, bvps, roe, eligible, flags=frozenset(), needs_csm=False, sub_industry=None)`: frozen dataclass.
 - `SectorFit`: `sector, n_fit, n_scored, slope, intercept, r2, lo, hi, status` (`"OK"` or a status code above).
 - `run_peer_regression(obs) -> tuple[list[PBResult], dict[str, SectorFit]]`: one fit per book sector present in obs
   (incl. sectors with n_fit 0 → FEW_NAMES), no entries for other sectors.
 - `PBResult`: `ticker, sector, signal, no_signal_reason, pb, roe, roe_w, fitted_pb, fair_value, residual, resid_pct,
-  implied_upside, n_fit, r2, flags`. `map_signal(resid_pct, upside) -> str`. `MODEL_VERSION = "peer_regression/0.1.0"`.
+  implied_upside, n_fit, r2, flags`. `map_signal(resid_pct, upside) -> str`. `MODEL_VERSION = "peer_regression/0.2.0"`.
 
 ## Data mapping and look-ahead (engine, SW)
 The engine first runs Model A for every ticker at `as_of`, then builds one PBObs per ticker from it: `bvps = b0`,
 `roe = roe_raw`, `needs_csm = (no_signal_reason == "NEEDS_CSM_INPUT")`, `eligible` and `sector` as for Model A, `price`
-the same close. All of these come from data with `filed_date ≤ as_of` and prices ≤ as_of (Model A's mapping), so the
+the same close, `sub_industry` = `securities.gics_sub_industry` (v0.2.0; current GICS applied to history, as for sectors).
+Report (v0.2.0): the disclaimer line adds `Model B is diagnostic only.`; columns unchanged. All of these come from data with `filed_date ≤ as_of` and prices ≤ as_of (Model A's mapping), so the
 regression never sees later data. All names of one `as_of` run are fitted together, TSX and US pooled.
 
 ## External check (P7-4)
@@ -189,7 +205,29 @@ well below book can rank as the cheapest name (U15 in G2: BUY, upside +123%). Th
 fit, winsorize regressors). The `NEG_ROE_UNFITTED` flag makes it visible; a rule change (e.g. cap such names at HOLD)
 needs a PM decision.
 
+## Revision v0.2.0 (revision round v2; evidence: `docs/qa/backtest_model_b.md`, phase8-validation §5 Q4, §6.4)
+**R1 payments, exchanges and data leave the book branch (P7-14).** Their equity book is not an operating asset (fee
+businesses with goodwill and buybacks; P/B 7–100), so a P/B~ROE line through them is meaningless and they steepen the
+Financials slope for everyone else (phase7 §6e: ALL +466%). They wait for the EV branch, like other asset-light names.
+*Evidence:* Financials IC −0.078 / spread −3.7% as specified; −0.009 / −0.9% with these two sub-industries out of the
+fit. The sub-industry split (MIN_FIT 12) never takes effect in the S&P 500, so it is not pursued. *Limitation:* TSX
+names have no sub-industry and stay in the book branch (e.g. X.TO); backlog. *Overfitting risk:* low to medium: the
+exclusion is economic and was proposed in Phase 7 before the backtest, but the exact two sub-industries are the ones
+the diagnostic measured.
+
+**R2 Model B becomes diagnostic only (not retired, not sign-flipped).** The sign problem is general, not a Financials
+artefact: 12m IC −0.054 overall and negative at 3, 6 and 12m; the plain low-P/B baseline is negative too (−0.037);
+R1 brings Financials to about zero, not positive. "Dear for its ROE" kept winning in 2014–2019 and reversed in
+2020–2021: a value-regime effect that a structural fix can't remove. Flipping the sign would be pure in-sample fitting
+and contradicts the economics. Retiring it would lose useful context (where a name sits vs its sector's P/B~ROE line,
+which the human reads next to Model A). So B keeps running and is shown, is labelled diagnostic in the report, is still
+measured in the backtest and the single holdout run (for information), and **never counts toward the Phase 10 gate**
+(`revision_v2_freeze.md` §4). Re-promotion needs a new spec and a fresh out-of-sample period. Overfitting risk: none
+(no parameter changed for performance).
+
 ## Changelog
+- **0.2.0:** revision round v2: `EV_SUB_INDUSTRIES` → `EV_BRANCH_PENDING` (P7-14), `sub_industry` input, `STATUS =
+  "diagnostic"`, G5. Fit maths unchanged.
 - **0.1.0:** initial version, book branch from proposal §3. Proposal G1 arithmetic verified, no corrections.
   QA review: ZERO_VARIANCE uses a 1e-12 tolerance; the "negative-ROE name never changes the fit" property excludes
   `n_scored`, which counts it.

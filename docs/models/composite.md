@@ -1,8 +1,10 @@
-# Model spec: Value–Quality–Momentum–Risk composite (`composite`, v0.1.0) — Model C
+# Model spec: Value–Quality–Momentum–Risk composite (`composite`, v0.2.0) — Model C
 
 Owner: AN · Tests: QA (`tests/unit/test_composite_spec.py`) · Code: `src/valuation/models/composite.py` ·
 Source: proposal `docs/models/proposals/buy_hold_sell.md` §0, §1 (E6), §4, §6, §8 (task P9-2). Data: `ttm.md` v0.2.0
 (Phase 9 data batch 2: `cfo_q`, `capex_q`, `gross_profit_q`, balance-sheet `total_assets`, `total_debt`).
+v0.2.0: revision round v2 (§Revision v0.2.0; frozen in `revision_v2_freeze.md`): B/P only in book sectors,
+cross-section per market, E6 = 274 sessions.
 
 ## Purpose
 *Where does this stock rank, inside its own GICS sector, on four separately checkable traits?* Cheap (Value),
@@ -17,9 +19,10 @@ fitted, and nothing here was chosen after looking at backtest results.
 > (`residual_income.md` §Report v2).
 
 ## Constants
-`MODEL_VERSION = "composite/0.1.0"`, `WINSOR = (0.05, 0.95)`, `MIN_SECTOR_NAMES = 5`, `MIN_FACTORS = 3`,
+`MODEL_VERSION = "composite/0.2.0"`, `WINSOR = (0.05, 0.95)`, `MIN_SECTOR_NAMES = 5`, `MIN_FACTORS = 3`,
 `BUY_PCT = 0.80`, `SELL_PCT = 0.20`, `MOM_VETO_PCT = 0.10`, `MOM_SKIP = 21`, `MOM_LOOKBACK = 273`, `VOL_WINDOW = 252`,
-`ANNUALIZE = 252`, `STD_EPS = 1e-12`, `FINANCIALS = "Financials"`.
+`ANNUALIZE = 252`, `STD_EPS = 1e-12`, `FINANCIALS = "Financials"`, (v0.2.0) `BOOK_SECTORS = frozenset({"Financials",
+"Utilities", "Real Estate", "Energy", "Materials"})` (the same set as Models A and B), `MARKETS = ("TSX", "US")`.
 ```
 FACTORS = {"value":    ("ep", "bp", "fcfp"),
            "quality":  ("roe", "gpa", "neg_accruals", "neg_leverage"),
@@ -34,6 +37,7 @@ zero, as in Model B.
 | Field | Meaning | Unit / default |
 |---|---|---|
 | `ticker`, `sector` | Listed symbol; GICS sector, exact name (`None`/`""` → `NO_SECTOR`) | str, str \| None |
+| `market` | v0.2.0: `"TSX"` or `"US"`, else `ValueError` | `"US"` |
 | `eligible` | Result of `eligibility` (E1–E5); anything but `True` → `NOT_ELIGIBLE` | bool \| None |
 | `history_ok` | `eligibility.model_c_history_ok` (E6); anything but `True` → `NO_SIGNAL / SHORT_HISTORY` | bool \| None |
 | `price` | Close on/before as_of (same close as Model A) | trading ccy \| None |
@@ -71,7 +75,7 @@ Every metric is None when any input it needs is None or fails its guard. `cap_re
 (market cap in reporting currency), only when `market_cap > 0`.
 ```
 ep           = ni_ttm / cap_rep                          (= EPS_TTM / price)
-bp           = bvps / price                              (price > 0)
+bp           = bvps / price   (price > 0)  — v0.2.0: only if sector ∈ BOOK_SECTORS, else None (no flag)
 roe          = roe                                       (passed through unchanged)
 mom          = mom ;   neg_vol = −vol
 -- non-financials only (sector != "Financials"; for Financials these four are None, not 0):
@@ -84,8 +88,9 @@ Mismatch flags are set only when both flows exist and their period ends differ. 
 (they rank low); they are not set to missing (D4). `raw_metrics` is computed for every input, eligible or not.
 
 ## Cross-section (`run_composite`)
-**Statistics universe** `U` = inputs with `eligible is True` and `history_ok is True` and a non-empty `sector`
-(TSX and US pooled). Names outside U get raw metrics only: no winsorized value, z, factor, S or percentile, and they
+**Statistics universe** `U` = inputs with `eligible is True` and `history_ok is True` and a non-empty `sector`.
+**v0.2.0: steps 1–5 run separately per market** on `U_m` = names in U with `market == m` (winsor bounds, sector z with
+groups (market, sector), `pct`, `mom_pct`, `factor_pct`); markets never influence each other. Below, "U" means `U_m`. Names outside U get raw metrics only: no winsorized value, z, factor, S or percentile, and they
 never influence any name in U.
 
 1. **Winsorize (pooled, per metric).** For metric m: `V_m` = raw values of names in U with m not None.
@@ -120,7 +125,7 @@ For each name the first matching row wins:
 | 2 | `NO_SIGNAL` / `SHORT_HISTORY` | `history_ok is not True` (E6 failed) |
 | 3 | `NO_SIGNAL` / `NO_SECTOR` | sector None or `""` |
 | 4 | `NO_SIGNAL` / `FEW_FACTORS` | fewer than 3 of the 4 factor scores (covers NO_TTM names without B/P etc.) |
-| 5 | `NO_SIGNAL` / `FEW_NAMES` | `|P| < 2` (pct undefined; not reachable in a real run) |
+| 5 | `NO_SIGNAL` / `FEW_NAMES` | `|P_m| < 2` in the name's market (pct undefined; not reachable in a real run) |
 | 6 | `map_signal(pct)`, then vetoes | |
 
 ## Flags (model flags, added to the passed-through `flags`)
@@ -266,6 +271,64 @@ BUY, so no veto), I4 HOLD (0.333333), I5 HOLD (0.5), I6 SELL (0.166667), I7 SELL
 (0.0375, 1.083333), so X1's exclusion in G2 is visible. G2 with X1 removed: every result identical to G2. G2 with I1's
 `history_ok=False`: I1 → `NO_SIGNAL / SHORT_HISTORY` and it leaves U (all statistics recomputed without it).
 
+**G2-v2 (v0.2.0): G2 under v0.2.0** (all names `market="US"`, `min_sector_names=3`). Only B/P changes: Industrials
+have bp None (`raw_metrics` bp column "—" for I1–I7, X1); Financials keep it, with bounds now from F1–F4 only:
+bp **[0.3883333333333333, 1.258333333333333]**, Financials bp (4, 0.795, 0.31246999855986) → z_bp F1 −0.304029, F2
+0.122678, F3 1.482809, F4 −1.301458. Every other bound, sector stat and z is as in G2. **I5 loses its only value metric
+→ 2 factors → `NO_SIGNAL / FEW_FACTORS`.** P = 10 names (divisor 9):
+
+| Ticker | V | S | pct | signal | value factor_pct |
+|---|---|---|---|---|---|
+| I1 | 0.394486 | 0.689838 | 0.888889 | **BUY** | 0.888889 |
+| I2 | −0.100039 | 0.741410 | 1.000000 | **HOLD** + VETO_DISTRESS | 0.444444 |
+| I3 | 1.526557 | 0.515399 | 0.777778 | HOLD (not a BUY → no veto flag) | 1.0 |
+| I4 | −0.138615 | −0.198491 | 0.333333 | HOLD + FCF_PERIOD_MISMATCH | 0.333333 |
+| I5 | — | — | — | NO_SIGNAL / FEW_FACTORS | — |
+| I6 | −0.720583 | −0.657209 | 0.222222 | HOLD | 0.111111 |
+| I7 | −1.031113 | −1.100911 | 0.000000 | **SELL** | 0.0 |
+| F1 | −0.089724 | 0.468193 | 0.666667 | HOLD | 0.555556 |
+| F2 | −0.256449 | 0.323135 | 0.555556 | HOLD | 0.222222 |
+| F3 | 0.212461 | −0.788970 | 0.111111 | **SELL** | 0.777778 |
+| F4 | 0.133713 | −0.026099 | 0.444444 | HOLD (mom_pct ≤ 0.10, no flag) | 0.666667 |
+
+Q, M, R per name as in G2 (I1 V = (z_ep + z_fcfp)/2 = (0.826879 − 0.037907)/2). The v0.1.0 G2 tables above stay as
+the reference for the unchanged steps (raw metrics other than bp, z of other metrics).
+
+**G4 (v0.2.0) two markets.** `min_sector_names=3`; inputs (fx 1, no flow/balance-sheet extras, so fcfp, gpa,
+neg_accruals, neg_leverage are None; history_ok and eligible True):
+
+| Ticker | market | sector | price | market_cap | bvps | ni_ttm | roe | mom | vol |
+|---|---|---|---|---|---|---|---|---|---|
+| U1 | US | Industrials | 50 | 10000 | 20 | 800 | 0.18 | 0.25 | 0.20 |
+| U2 | US | Industrials | 40 | 8000 | 10 | 300 | 0.10 | 0.05 | 0.25 |
+| U3 | US | Industrials | 30 | 6000 | 25 | 600 | 0.15 | −0.10 | 0.30 |
+| U4 | US | Industrials | 60 | 12000 | 12 | 400 | 0.12 | 0.40 | 0.22 |
+| F1 | US | Financials | 100 | 50000 | 70 | 4500 | 0.10 | 0.06 | 0.21 |
+| F2 | US | Financials | 60 | 20000 | 50 | 1500 | 0.09 | 0.08 | 0.22 |
+| F3 | US | Financials | 45 | 9000 | 60 | 600 | 0.05 | −0.10 | 0.30 |
+| T1 | TSX | Industrials | 20 | 2000 | 15 | 250 | 0.14 | 0.30 | 0.24 |
+| T2 | TSX | Industrials | 35 | 3500 | 10 | 140 | 0.08 | −0.20 | 0.35 |
+| T3 | TSX | Industrials | 15 | 1500 | 12 | 210 | 0.16 | 0.10 | 0.28 |
+
+Bounds US: ep [0.034583333333333334, 0.097], bp [0.7133333333333333, 1.2833333333333332] (F1–F3 only), roe [0.062,
+0.171], mom [−0.1, 0.355], neg_vol [−0.3, −0.203]; TSX: ep [0.0485, 0.1385], roe [0.086, 0.158], mom [−0.17, 0.28],
+neg_vol [−0.343, −0.244] (no bp: no TSX book-sector name).
+
+| Ticker | V | Q | M | R | S | pct (own market) | mom_pct | signal |
+|---|---|---|---|---|---|---|---|---|
+| U1 | 0.658373 | 1.311816 | 0.631810 | 1.092763 | 0.923691 | 1.0 (/6) | 0.833333 | **BUY** |
+| U2 | −0.919866 | −1.293469 | −0.504028 | −0.183258 | −0.725155 | 0.166667 | 0.333333 | **SELL** |
+| U3 | 1.289669 | 0.541239 | −1.355906 | −1.540728 | −0.266432 | 0.333333 | 0.083333 | HOLD |
+| U4 | −1.028176 | −0.559586 | 1.228125 | 0.631223 | 0.067896 | 0.5 | 1.0 | HOLD |
+| F1 | 0.193046 | 0.994832 | 0.579324 | 0.827606 | 0.648702 | 0.833333 | 0.5 | **BUY** |
+| F2 | −0.339250 | 0.373062 | 0.827606 | 0.579324 | 0.360185 | 0.666667 | 0.666667 | HOLD |
+| F3 | 0.146205 | −1.367894 | −1.406930 | −1.406930 | −1.008887 | 0.0 | 0.083333 | **SELL** |
+| T1 | 0.529908 | 0.392232 | 1.135550 | 1.099853 | 0.789386 | 1.0 (/2) | 1.0 | **BUY** |
+| T2 | −1.400471 | −1.372813 | −1.297771 | −1.319824 | −1.347720 | 0.0 | 0.0 | **SELL** |
+| T3 | 0.870563 | 0.980581 | 0.162221 | 0.219971 | 0.558334 | 0.5 | 0.5 | HOLD |
+
+F1 V = (z_ep 1.323501 + z_bp −0.937410)/2. Changing any TSX input changes no US result and vice versa.
+
 **G3 momentum and volatility (session indexing).**
 - `c = [1.0, 2.0, …, 300.0]` (c_k = k + 1, 300 bars): `momentum = c[-22]/c[-274] − 1 = 279/27 − 1 = 9.333333333333334`
   (exact). Off by one in either index gives 280/28 − 1 = 9.0 or 279/28 − 1 = 8.964286, so this catches both mistakes.
@@ -280,6 +343,8 @@ BUY, so no veto), I4 HOLD (0.333333), I5 HOLD (0.5), I6 SELL (0.166667), I7 SELL
 - `momentum([100, 0, 100, …])` or any value ≤ 0 → `ValueError`.
 
 ## Property expectations (QA)
+- **v0.2.0 market separation:** adding, removing or changing any name of one market changes no result, bound or stat
+  of the other market. `bp` is None for every name outside BOOK_SECTORS.
 - **Permutation:** permuting the inputs permutes the results identically; stats unchanged.
 - **Outsiders don't count:** adding a `NOT_ELIGIBLE`, `SHORT_HISTORY` or `NO_SECTOR` name (any values) changes no other
   name's result and no bound or sector stat.
@@ -300,14 +365,14 @@ equality checks.
 ```python
 from valuation.models.composite import (
     CompositeInputs, CompositeResult, CompositeStats, SectorStat,
-    MODEL_VERSION, WINSOR, MIN_SECTOR_NAMES, MIN_FACTORS, BUY_PCT, SELL_PCT, MOM_VETO_PCT,
+    MODEL_VERSION, BOOK_SECTORS, MARKETS, WINSOR, MIN_SECTOR_NAMES, MIN_FACTORS, BUY_PCT, SELL_PCT, MOM_VETO_PCT,
     MOM_SKIP, MOM_LOOKBACK, VOL_WINDOW, ANNUALIZE, STD_EPS, FINANCIALS, FACTORS, METRICS,
     momentum, volatility, raw_metrics, winsor_bounds, winsorize, sector_zscores, pct_rank,
     map_signal, run_composite,
 )
 ```
 - `momentum(adj_closes: Sequence[float]) -> float | None`; `volatility(adj_closes: Sequence[float]) -> float | None`.
-- `CompositeInputs(ticker, sector, eligible, history_ok, price=None, market_cap=None, fx_rate=1.0, bvps=None,
+- `CompositeInputs(ticker, sector, eligible, history_ok, market="US", price=None, market_cap=None, fx_rate=1.0, bvps=None,
   ni_ttm=None, ni_period_end=None, roe=None, cfo_ttm=None, cfo_period_end=None, capex_ttm=None,
   capex_period_end=None, gross_profit_ttm=None, total_assets=None, total_debt=None, mom=None, vol=None,
   flags=frozenset())`: frozen dataclass; period ends are `datetime.date | None`.
@@ -322,15 +387,16 @@ from valuation.models.composite import (
   risk, mom_pct, metrics (raw, 9 keys), winsorized (dict, only metrics with a value), z (dict, only metrics with a z),
   factor_pct (dict 4 keys, value or None), factor_labels (dict 4 keys, label or None), flags (frozenset)`.
   Names outside U: `n_factors = 0`, factors/score/pct/mom_pct None, `winsorized = z = {}`, factor entries None.
-- `CompositeStats`: `bounds: dict[str, tuple[float, float]]` (metrics with values in U), `sectors: dict[tuple[str, str],
-  SectorStat]` with `SectorStat(n, mean, std, used: bool)` for every (sector, metric) with n ≥ 1 in U.
+- `CompositeStats` (v0.2.0 keyed by market): `bounds: dict[tuple[str, str], tuple[float, float]]` keyed (market,
+  metric), `sectors: dict[tuple[str, str, str], SectorStat]` keyed (market, sector, metric) with `SectorStat(n, mean,
+  std, used: bool)` for every key with n ≥ 1 in `U_m`.
 
 ## Data mapping (engine, SW; `run_signals` gains Model C)
 After Models A and B, the engine builds one `CompositeInputs` per universe ticker at `as_of`:
 
 | Field | Source |
 |---|---|
-| sector, eligible | as for Model A (`securities` GICS sector; `eligibility.eligible`) |
+| sector, eligible, market | as for Model A (`securities` GICS sector; `eligibility.eligible`; market) |
 | history_ok | `eligibility[t].model_c_history_ok` (None if no eligibility row → NOT_ELIGIBLE anyway) |
 | price, market_cap, fx_rate | `build_inputs`: `inp.price`, `inp.price × inp.shares_outstanding`, `inp.fx_rate` |
 | bvps, roe, ni_ttm | Model A's `b0`, `roe_raw`, and the NI it used (`ni_common_ttm`, None on `CCY_MISMATCH`); `ni_period_end` = NI TTM `period_end` |
@@ -341,7 +407,7 @@ After Models A and B, the engine builds one `CompositeInputs` per universe ticke
 
 A ticker without a `build_inputs` row still gets an input (price, cap and fundamentals None; mom and vol from prices),
 so it lands in `FEW_FACTORS` if eligible. `revenue_q`, `ebit_q` and `cash` (also in data batch 2) are not used by
-Model C (Model B EV branch, Phase 10). All names of one as_of run together, TSX and US pooled.
+Model C (Model B EV branch, Phase 10). All names of one as_of run together; v0.2.0 statistics per market.
 
 **Report** (`screen_signals.csv`): adds `c_signal, c_no_signal_reason, c_score, c_pct, c_n_factors, c_value,
 c_quality, c_momentum, c_risk`; model flags join `flags`. Payload (`signals` JSON) adds `c_metrics`, `c_winsorized`,
@@ -387,6 +453,42 @@ bars before the first backtest date.
 - **D12 Flow pairs need equal period ends** (FCF, accruals) and otherwise drop the metric with a flag; balance-sheet
   denominators come from the book-value filing, not re-aligned, to avoid a second filing-selection rule.
 
+## Revision v0.2.0 (revision round v2; evidence: `docs/qa/backtest_model_c.md`, phase9-validation §3–§5)
+In-sample evidence only; holdout untouched; parameters frozen in `revision_v2_freeze.md`.
+
+**R1 Value: kept at equal weight, but B/P only where book measures invested capital (BOOK_SECTORS).** Options
+weighed: keep as is, re-weight, drop, or a quality-adjusted value.
+- *Evidence:* V's 12m IC −0.056 (t −1.32, not significant), 3/10 years; Q +0.022, M ≈ 0, R +0.038 (none significant).
+- *Not dropped, not re-weighted:* multi-year value droughts are documented (proposal §4), so a decade of negative
+  value in US large caps is weak evidence against the long-run premium; re-weighting toward Q and R would fit weights to
+  four insignificant in-sample ICs. Equal weights stay.
+- *Not a quality-adjusted residual value:* that is Model B's construction (P/B regressed on ROE), which had the same
+  negative sign (−0.054); Q is already a separate factor in C.
+- *Structural fix:* in asset-light sectors book equity omits most invested capital (expensed R&D, brand, software;
+  buybacks shrink or turn book negative), so B/P there ranks accounting conventions, not cheapness. Models A and B
+  already treat book as meaningful only in BOOK_SECTORS (A's asset-light P/B gate, B's book branch); C now does the
+  same. Outside book sectors V = mean of E/P and FCF/P; Financials keep E/P and B/P. No new parameter.
+- *Overfitting risk:* **medium.** The direction agrees with the in-sample (value, partly B/P, lost), and Lev &
+  Srivastava (2019)-type arguments became popular after value's drawdown. Mitigants: the B/P-only IC by sector was
+  never measured here, and the rule reuses a sector set fixed in Phase 7, before any backtest.
+
+**R2 Cross-section per market (P9-9; the brief calls it P9-8).** Pooled quintiles with sector-only neutrality give the
+TSX 29% BUY vs US 16% (2026-11-10): sector means mix two markets with different valuation levels, so the BUY share
+follows the market, not the stock. Per-market statistics make the quintiles 20/20 within each market by construction.
+*Cost:* fewer names per (market, sector) on the TSX, so more `FEW_FACTORS` there (MIN_SECTOR_NAMES unchanged at 5).
+*Backtest effect:* none on US in-sample dates (no TSX inputs there). *Overfitting risk:* low (fixes a live anomaly; not
+measured on returns).
+
+**R3 Momentum history (P9-6, D5).** `config/liquidity.yaml` `min_history_sessions` 273 → **274** in both markets
+(eligibility.md v0.1.1), so every E6-passing name has MOM (t−273). The momentum formula (proposal's 12-1) is unchanged.
+*Overfitting risk:* none (a definitional off-by-one).
+
+Unchanged: factor definitions other than bp, equal weights, quintile bands, vetoes, MIN_FACTORS, MIN_SECTOR_NAMES,
+winsor levels.
+
 ## Changelog
+- **0.2.0:** revision round v2: bp only in BOOK_SECTORS, per-market cross-section (`market` input, stats keyed by
+  market), E6 274 (eligibility); new goldens G2-v2 and G4 (throwaway numpy/scipy script; it reproduces the v0.1.0 G2
+  exactly when bp is allowed in all sectors).
 - **0.1.0:** initial version from proposal §4 (task P9-2). Proposal X/Y/Z arithmetic verified: S(Y) = −0.325
   (the proposal prints −0.33, rounded). Golden numbers computed with a numpy reference script (6 decimals printed).

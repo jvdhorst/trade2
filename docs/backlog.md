@@ -74,7 +74,7 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | P8-4 | Delisted-price source (e.g. Stooq, new host) to remove survivorship bias: 158/258 removed names lack prices (11% of member-dates) | PM/SW | todo |
 | P8-5 | Predecessor-CIK map for reorganised filers (XOM, BLK, DIS, AVGO, LIN) | SW | todo |
 | P8-6 | Share count for multi-class EDGAR filers (META, EL, MKC, STZ, LEN, HRL, TSN, …): spec a fallback (e.g. weighted-average basic shares) | AN/SW | todo |
-| P8-7 | PM decision on the backtest proposals (phase8-validation §6): Model A SELL rule, one-off ROE rule (P7-11), Model B Financials payments/exchanges (P7-14) | PM/AN | todo |
+| P8-7 | PM decision on the backtest proposals (phase8-validation §6): Model A SELL rule, one-off ROE rule (P7-11), Model B Financials payments/exchanges (P7-14) | PM/AN | specced in revision round v2 (R2-0), PM review in the PR |
 | P8-8 | Live first load: bulk upserts instead of `executemany` (36 min for 503 names) | SW | done (P9: S&P 500 first load 502 s incl. 2y history; TSX 200 s) |
 | P8-9 | Historical E3/E2 thresholds are nominal (US$5B cap fails ~10 names/date in 2014); consider indexed/relative thresholds for history | AN/PM | todo |
 | P8-10 | Benchmark yields and returns (S&P 500 TR, SPY/IVV/VOO, S&P/TSX, XIC/XIU/ZCN): spec `docs/models/benchmarks.md`; report block + backtest excess-return column | QA/SW | done (P9-5) |
@@ -83,12 +83,24 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | P9-3 | Model C tests from spec, `models/composite.py`, run_signals + screen_signals `c_*` | QA/SW | done (90 spec tests) |
 | P9-4 | Backtest Model C + per-factor spread/IC, `docs/qa/backtest_model_c.md` | QA | done: **C FAIL** (IC 0.008, t 0.28; 6/10 years) |
 | P9-5 | Benchmarks: ingest, `benchmarks_daily`, report block + `benchmarks.csv`, backtest excess vs SPX_TR / XIC | QA/SW | done (XIC/XIU exact vs BlackRock; SSGA/Vanguard/ishares.com unreachable) |
-| P9-6 | PM decision: eligibility `min_history_sessions` 273 → 274 so MOM (t−273) is always defined for E6-passing names (composite D5) | PM | todo |
+| P9-6 | PM decision: eligibility `min_history_sessions` 273 → 274 so MOM (t−273) is always defined for E6-passing names (composite D5) | PM | specced: eligibility 0.1.1 (R2-0) |
 | P9-7 | Source choice prefers Yahoo for 52/53-week EDGAR filers (Yahoo labels the quarter at month-end, e.g. AAPL 09-30 vs 09-26), so flows/NI use an estimated filed date; related to P7-13 | AN/SW | todo |
 | P9-8 | E/P vs Yahoo `trailingPE` and SPY/IVV/VOO issuer distribution checks blocked (quoteSummary crumb 401; ssga.com, vanguard.com, ishares.com not reachable) | QA/PM | blocked |
-| P9-9 | Model C pools TSX + US quintiles: TSX gets 29% BUY vs US 16% on 2026-11-10 (anomaly, not tuned) | PM/AN | todo |
+| P9-9 | Model C pools TSX + US quintiles: TSX gets 29% BUY vs US 16% on 2026-11-10 (anomaly, not tuned) | PM/AN | specced: composite 0.2.0 per-market cross-section (R2-0) |
 | P9-10 | EDGAR `total_debt` absent for ~60 US non-financials (no D1–D5 tag); `−leverage` missing there | AN/SW | todo |
-| P10 | Model B EV/Sales branch + vote | AN/QA/SW | blocked (gate: ≥ 2 models pass; 0 of 3 do) |
+| P10 | Model B EV/Sales branch + vote | AN/QA/SW | blocked (gate per `revision_v2_freeze.md` §4: ≥ 2 of A 0.2.0, C 0.2.0, H 0.1.0 pass; B diagnostic, never counts) |
+
+## Revision round v2 (frozen protocol: [`docs/models/revision_v2_freeze.md`](models/revision_v2_freeze.md), params SHA-256 `6c6354c5…088e`)
+| ID | Task | Owner | Acceptance | Status |
+|---|---|---|---|---|
+| R2-0 | Specs: `residual_income` 0.2.0, `peer_regression` 0.2.0, `composite` 0.2.0, `eligibility` 0.1.1, `shareholder_yield` 0.1.0, freeze doc | AN | PR reviewed by PM/QA | done (this PR) |
+| R2-1 | QA spec tests before code: A G8 + changed G3/G5; B G5 + EV-sub-industry property; C G2-v2, G4, market separation; H G1–G10 + properties; eligibility 274; `FROZEN_V2` canonical SHA-256 = frozen value | QA | Tests written from specs, red before R2-2 | todo |
+| R2-2 | SW: `ni_quarters` + one-off rule + `screen_signal` (A); `sub_industry` (B); `market`, bp gating, per-market stats (C); `models/shareholder_yield.py` + engine mapping (same-source shares, split factor); `liquidity.yaml` 274; report columns (`a_model_signal`, `h_*`, B diagnostic disclaimer) | SW | R2-1 green, ruff clean | todo |
+| R2-3 | SW: harness additions (freeze §3): model H + H_BBY/H_DY diagnostics, A backtest label = model label, holdout guard, thresholds hash incl. H | SW/QA | Guard tested (second holdout run refused) | todo |
+| R2-4 | QA: in-sample US backtest of the revised models, `docs/qa/backtest_v2_insample.md`; no change afterwards | QA | Report with both hashes | todo |
+| R2-5 | QA: **single** holdout run (`report --holdout --today 2026-11-10`), `docs/qa/holdout_v2.md`; pass/fail per model vs the unchanged bar | QA | PM sign-off before the run; one `kind='holdout'` row | todo (after R2-4) |
+| R2-6 | PM: Phase 10 gate decision from R2-5 (≥ 2 of A, C, H pass); failed models stay "unvalidated" | PM | Decision log entry | todo |
+| R2-7 | TSX GICS sub-industry for Financials (no source today: X.TO etc. stay in B's book branch) | SW/AN | Mapping file or source | todo |
 
 ## Decisions log
 - 2026-11-09: initial testing uses a ~2% subset of the universe (14 tickers, `universe/reference.csv`).
@@ -126,6 +138,11 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
   (12m IC 0.0081, t 0.28; spread > 0 in 6/10 years, mean −1.89%); factor ICs V −0.056, Q 0.022, M 0.001, R 0.038.
   BUY 12m excess vs SPX_TR: A −3.1%, B −1.1%, C −1.9% (equal-weighted universe −1.0%). Holdout still locked; no
   parameter changed. Vote stays off (0 of 3 pass).
+
+- 2026-11-10: Revision round v2 specced (AN, docs only): A 0.2.0 (SELL information only; one-off quarter rule),
+  B 0.2.0 (payments/exchanges to EV branch; **diagnostic only**), C 0.2.0 (B/P in book sectors only; per-market
+  cross-section), eligibility E6 274, new Model H shareholder yield 0.1.0. Parameters frozen (SHA-256
+  `6c6354c540bebc970709bc9a150b29db9e15d61a2b03f744de04ad21d0aa088e`). Holdout still unspent; one joint run after R2-4.
 
 ## Next up (PM selection)
 1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.

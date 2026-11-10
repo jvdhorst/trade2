@@ -68,6 +68,7 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | P7-13 | 52/53-week filers: Yahoo vs EDGAR quarter ends 1–5 days apart give 22 false ROE_PERIOD_MISMATCH (spec change) | AN/SW | todo |
 | P7-14 | Model B Financials slope steepened by payments/ratings/brokers (MA, MCO, V, AMP, AON): ALL +466%; sub-industry peers? | AN/PM | todo |
 | P8-1..3 | Backtest harness (PIT S&P membership, engine, A/B results) | SW/QA | todo |
+| P8-4 | Benchmark yields and returns (S&P 500 TR, SPY/IVV/VOO, S&P/TSX, XIC/XIU/ZCN): spec `docs/models/benchmarks.md`; report block + backtest excess-return column | QA/SW | todo (after Phase 8 merges) |
 | P9 | Data batch 2 + Model C composite | AN/QA/SW | todo |
 | P10 | Model B EV/Sales branch + vote | AN/QA/SW | todo |
 

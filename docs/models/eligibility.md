@@ -1,4 +1,4 @@
-# Model spec: "Well-traded" eligibility filter (`eligibility`, v0.1.0)
+# Model spec: "Well-traded" eligibility filter (`eligibility`, v0.1.1)
 
 Owner: AN · Tests: QA (`tests/unit/test_eligibility_spec.py`) · Code: `src/valuation/models/eligibility.py` ·
 Config: `config/liquidity.yaml`
@@ -34,7 +34,7 @@ tsx:
   mdtv_window: 63
   max_zero_volume_days: 3
   max_stale_sessions: 5
-  min_history_sessions: 273
+  min_history_sessions: 274
 us:
   min_mdtv: 25_000_000
   min_market_cap: 5_000_000_000
@@ -42,7 +42,7 @@ us:
   mdtv_window: 63
   max_zero_volume_days: 3
   max_stale_sessions: 5
-  min_history_sessions: 273
+  min_history_sessions: 274
 ```
 `load_config` raises `ValueError` if a section (`tsx`, `us`) or any of the seven keys is missing, or if a value is
 not a number (PyYAML reads `1e9` as a string; write `1_000_000_000` or `1.0e+9`). The thresholds
@@ -196,4 +196,6 @@ from valuation.models.eligibility import (
 - `MODEL_VERSION = "eligibility/0.1.0"`
 
 ## Changelog
+- **0.1.1:** revision round v2 (P9-6): `min_history_sessions` 273 → 274 in both markets, so Model C's MOM
+  (t−21 / t−273, 274 bars) exists for every E6-passing name. `config/liquidity.yaml` changes with the implementation.
 - **0.1.0:** initial version, from proposal §1.

@@ -60,6 +60,14 @@ backtest it, and report each factor's spread.
 Only after ≥ 2 models pass the backtest bar. Vote rules as in proposal §5. Report shows agreement and the strongest
 objection.
 
+### Revision round v2 (after Phases 8–9: A, B, C all FAIL in-sample)
+Specs only, from in-sample evidence and economics; frozen in `docs/models/revision_v2_freeze.md` (params SHA-256
+`6c6354c5…088e`). A 0.2.0: SELL shown as HOLD (information only), one-off-quarter ROE rule. B 0.2.0: payments /
+exchanges to the EV branch, **diagnostic only**. C 0.2.0: B/P in book sectors only, per-market quintiles, E6 274.
+New H 0.1.0 shareholder yield (no new data). Then QA tests → SW → in-sample report → **one** holdout run for all
+models, verdict against the unchanged bar; a fail leaves the model "unvalidated" and the holdout spent. Phase 10 only if
+≥ 2 of A, C, H pass (backlog R2-0 … R2-6).
+
 ## Decisions (approved by the user with the PM defaults)
 1. **Approve new host `fred.stlouisfed.org`** for the US 10-year yield (alternative: treasury.gov).
 2. **Accept AN's parameters as the starting config** (ERP 5%, the thresholds above). They'll be revisited only after

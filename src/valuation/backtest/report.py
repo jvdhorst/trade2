@@ -513,7 +513,7 @@ def benchmark_fwd(con, key: str, dates: list[date]) -> pd.DataFrame:
 
 
 def benchmark_excess_tables(results: dict, bench: pd.DataFrame, dates: list[date],
-                            models=("A", "B", "C")) -> dict[str, pd.DataFrame]:
+                            models=("A", "B", "C", "H")) -> dict[str, pd.DataFrame]:
     out = {}
     for model in models:
         if model not in results:

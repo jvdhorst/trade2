@@ -91,3 +91,9 @@ SCHEMA.append("""CREATE TABLE IF NOT EXISTS signals (
         run_id VARCHAR, ticker VARCHAR, as_of DATE, model_versions VARCHAR,
         a_signal VARCHAR, b_signal VARCHAR, payload_json VARCHAR, PRIMARY KEY (run_id, ticker)
     )""")
+
+# Stock splits (backtest DB; empty in the live DB, so the engine's split adjustment is a no-op).
+# ratio = numerator / denominator (4.0 for a 4-for-1). Effective at the open of `date`.
+SCHEMA.append("""CREATE TABLE IF NOT EXISTS splits (
+        ticker VARCHAR, date DATE, ratio DOUBLE, source VARCHAR, PRIMARY KEY (ticker, date)
+    )""")

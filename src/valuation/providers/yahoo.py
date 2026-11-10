@@ -377,6 +377,23 @@ class YahooProvider:
             self.cache.put(SOURCE, key, raw)
         return raw
 
+    PERIOD_URL = ("https://query2.finance.yahoo.com/v8/finance/chart/{t}?period1={p1}&period2={p2}"
+                  "&interval=1d&events=div%7Csplit&includeAdjustedClose=true")
+
+    def chart_period(self, ticker: str, start: date, end: date) -> dict:
+        """Daily bars between two dates (backtest history). `range=max` is not used: Yahoo
+        down-samples it to monthly bars. A 404 (delisted symbol) raises requests.HTTPError."""
+        key = f"{ticker}.chart_{start.isoformat()}_{end.isoformat()}"
+        raw = self.cache.get(SOURCE, key)
+        if raw is None:
+            p1 = int(datetime(start.year, start.month, start.day, tzinfo=UTC).timestamp())
+            p2 = int(datetime(end.year, end.month, end.day, tzinfo=UTC).timestamp()) + 86400
+            raw = self._get_json(self.PERIOD_URL.format(t=ticker, p1=p1, p2=p2))
+            if not (raw.get("chart") or {}).get("result"):
+                raise ProviderError(f"{ticker}: chart empty: {str(raw)[:120]}")
+            self.cache.put(SOURCE, key, raw)
+        return raw
+
     def fundamentals(self, ticker: str, fallback_currency: str | None) -> list[Fact]:
         """Quarterly balance-sheet + NI facts via fundamentals-timeseries (fields we use only)."""
         key = f"{ticker}.timeseries_v2"  # v2: adds the NI types

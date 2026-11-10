@@ -45,9 +45,22 @@ def main(argv: list[str] | None = None) -> int:
     pc.add_argument("--tolerance", type=float, default=None)
     pc.add_argument("--issuer", action="store_true",
                     help="compare against issuer BVPS and ROE (universe/issuer_sources.csv)")
+    pb = sub.add_parser("backtest", help="Phase 8 backtest (spec docs/models/backtest.md)")
+    pb.add_argument("action", choices=["build", "run", "report"])
+    pb.add_argument("--bt-db", default="data/backtest.duckdb")
+    pb.add_argument("--market", dest="universe", choices=["US", "TSX"], default="US")
+    pb.add_argument("--workers", type=int, default=4)
+    pb.add_argument("--today", type=date.fromisoformat, default=date.today())
+    pb.add_argument("--holdout", action="store_true",
+                    help="also compute holdout metrics (frozen thresholds; logged in bt_runs)")
+    pb.add_argument("--out", default="reports/backtest")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
+    if args.cmd == "backtest":  # uses its own DB (--bt-db), never the live one
+        from .backtest.cli_cmd import backtest_cmd
+
+        return backtest_cmd(args)
     con = connect(args.db)
     if args.cmd == "init":
         print(f"schema ready at {args.db}")

@@ -52,6 +52,25 @@ eligibility filter). IFRS 17 life insurers need the after-tax CSM, a manual inpu
 [`universe/insurer_csm.csv`](universe/insurer_csm.csv) (`--csm`). A listed insurer with a blank value gets `NO_SIGNAL`
 / `NEEDS_CSM_INPUT` until a human fills it in. Full per-ticker inputs are in the DuckDB table `signals` (`payload_json`).
 
+### Backtest (Phase 8): `valuation backtest build|run|report`
+Spec [`docs/models/backtest.md`](docs/models/backtest.md). It has its own DuckDB, `data/backtest.duckdb`, so the live DB is never touched.
+```bash
+uv run valuation backtest build                  # PIT S&P 500 membership (Wikipedia), daily prices 2012→ (as traded),
+                                                 # splits, dividends, EDGAR history, 10y yields, USD/CAD
+uv run valuation backtest run --workers 4        # month-ends 2014→: eligibility → Model A → Model B per date (resumable)
+uv run valuation backtest report                 # in-sample metrics + diagnostics → reports/backtest/*.md
+uv run valuation backtest report --holdout       # also the locked last 36 month-ends (frozen thresholds; logged in bt_runs)
+uv run valuation backtest run --market TSX       # supplementary: current TSX constituents (survivor-biased, short history)
+uv run valuation backtest report --market TSX
+```
+How it works:
+- Each month-end runs the live `run_signals` unchanged, using only prices dated ≤ d and facts filed ≤ d. Estimated Yahoo filing dates get an extra 30 days.
+- Forward 3/6/12-month total returns come from `adj_close`, measured from the next session.
+- The metrics are: the sector-neutral BUY − SELL spread per year, hit rates against the sector median, the Spearman rank IC with a Newey–West t, turnover, and the pass bar. A low-P/B baseline is reported alongside.
+- Removed index members that Yahoo no longer serves have no prices. US results are therefore labelled a **survivor-biased upper bound**, and the size of the gap is reported.
+
+Results: [`docs/qa/phase8-validation.md`](docs/qa/phase8-validation.md).
+
 Per-ticker fetches run on 4 threads (`--workers`), with a shared rate limit (Yahoo ≈4 req/s, SEC ≤10 req/s).
 Fetch history is in the `fetch_log` table.
 
@@ -66,6 +85,7 @@ For SEC EDGAR in production, set `VALUATION_SEC_USER_AGENT="<app> <contact email
 | US 10y yield | FRED `DGS10` (`fred.stlouisfed.org`) |
 | Daily volume, adjusted close, dividends | Yahoo chart API |
 | Index constituents + GICS sector | iShares XIC holdings (TSX), Wikipedia (S&P 500) |
+| Point-in-time S&P 500 membership (backtest) | Wikipedia "Historical components of the S&P 500" (changes table; moved off the constituents page in Aug 2026) |
 | Issuer BVPS and ROE (QA reference), insurer CSM (manual) | Bank and insurer supplementary financial packs |
 
 Raw responses are cached under `data/raw/<source>/<date>/`. Parsed data goes to DuckDB.
@@ -78,6 +98,9 @@ src/valuation/
   ingest/     pipeline.py                      universe -> DB
   models/     book_value.py, eligibility.py,   model code (specs: docs/models/*.md)
               residual_income.py (A), peer_regression.py (B)
+  backtest/   membership.py, data.py,          Phase 8: PIT S&P 500 membership, backtest DB build,
+              engine.py, metrics.py,           per-date runner, metrics, report
+              runner.py, report.py
   ttm.py                                       point-in-time TTM flows + DPS_TTM
   engine.py                                    DB -> model inputs -> valuations table
 config/       liquidity.yaml                   eligibility thresholds

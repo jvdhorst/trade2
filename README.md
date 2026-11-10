@@ -65,9 +65,11 @@ Spec [`docs/models/backtest.md`](docs/models/backtest.md). It has its own DuckDB
 uv run valuation backtest build                  # PIT S&P 500 membership (Wikipedia), daily prices 2012→ (as traded),
                                                  # splits, dividends, EDGAR history, 10y yields, USD/CAD
 uv run valuation backtest benchmarks             # benchmark series 2012→ for the excess-vs-benchmark column
-uv run valuation backtest run --workers 4        # month-ends 2014→: eligibility → Models A, B, C per date (resumable)
+uv run valuation backtest run --workers 4        # in-sample month-ends 2014→ (holdout dates untouched): Models A, B, C, H per date (resumable)
 uv run valuation backtest report                 # in-sample metrics + diagnostics → reports/backtest/*.md
-uv run valuation backtest report --holdout       # also the locked last 36 month-ends (frozen thresholds; logged in bt_runs)
+# ONE-SHOT holdout (revision round v2): refused if the code's parameter SHA-256 differs from the freeze doc,
+# or docs/qa/holdout_v2.md / a holdout bt_runs row already exists. Runs all dates and reports in one go.
+uv run valuation backtest run --holdout --freeze docs/models/revision_v2_freeze.md --today 2026-11-10
 uv run valuation backtest run --market TSX       # supplementary: current TSX constituents (survivor-biased, short history)
 uv run valuation backtest report --market TSX
 ```
@@ -77,6 +79,7 @@ How it works:
 - The metrics are: the sector-neutral BUY − SELL spread per year, hit rates against the sector median, the Spearman rank IC with a Newey–West t, turnover, and the pass bar. A low-P/B baseline is reported alongside.
 - Removed index members that Yahoo no longer serves have no prices. US results are therefore labelled a **survivor-biased upper bound**, and the size of the gap is reported.
 
+- Revision round v2: Model A shows a model SELL as HOLD + `SELL_ZONE` (`a_signal`; the model label is `a_model_signal` and is what the backtest uses), Model B is **diagnostic only**, Model C runs per market with B/P in book sectors only, and Model H (shareholder yield, `h_*` columns) is new. Frozen parameters: `valuation.models.FROZEN_V2`, SHA-256 in `docs/models/revision_v2_freeze.md`.
 - Model C is reported with its four factors as diagnostics (C_V, C_Q, C_M, C_R: each factor's own spread and IC), and every model's BUY / SELL / ALL buckets get an **excess return vs the market benchmark** (`SPX_TR` for US, `XIC` for TSX), alongside the pass bar.
 
 Results: [`docs/qa/phase8-validation.md`](docs/qa/phase8-validation.md) (A, B), [`docs/qa/phase9-validation.md`](docs/qa/phase9-validation.md) (data batch 2, C, benchmarks).

@@ -141,7 +141,8 @@ def test_j_columns_after_h_before_flags(con, csm):
     cols = list(df.columns)
     i = cols.index("j_signal")
     assert cols[i:i + 8] == J_COLUMNS
-    assert cols[i + 8] == "flags" and cols[-1] == "flags"
+    # altman_z.md 0.1.0 §Report: the g_* columns now sit between j_* and flags
+    assert cols[i + 8] == "g_signal" and cols[-1] == "flags"
     assert max(k for k, c in enumerate(cols) if c.startswith("h_")) == i - 1
     assert "J" in info["counts"]
     assert not any(c.startswith("j_") and "vote" in c for c in cols)

@@ -43,6 +43,9 @@ COLUMNS = [
     # Model J columns (ebit_yield_roc.md 0.1.0 §Report): after h_*, before flags
     "j_signal", "j_no_signal_reason", "j_ey", "j_roc", "j_ev", "j_rank_ey", "j_rank_roc",
     "j_pct",
+    # Model G columns (altman_z.md 0.1.0 §Report): after j_*, before flags
+    "g_signal", "g_no_signal_reason", "g_z", "g_zone", "g_x1", "g_x2", "g_x3", "g_x4",
+    "g_cfo_to_debt", "g_distress_veto",
     "flags",
 ]
 

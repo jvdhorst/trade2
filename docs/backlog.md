@@ -102,6 +102,17 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | R2-6 | PM: Phase 10 gate decision from R2-5 (≥ 2 of A, C, H pass); failed models stay "unvalidated" | PM | Decision log entry | todo |
 | R2-7 | TSX GICS sub-industry for Financials (no source today: X.TO etc. stay in B's book branch) | SW/AN | Mapping file or source | todo |
 
+## Model J: EBIT yield + return on capital (spec [`docs/models/ebit_yield_roc.md`](models/ebit_yield_roc.md) v0.1.0; not frozen, not in FROZEN_V2)
+| ID | Task | Owner | Acceptance | Status |
+|---|---|---|---|---|
+| J-0 | Spec `ebit_yield_roc` 0.1.0 from proposal §7: EV, EY, financing-side IC, ROC, joint rank (min ranks; ties by rank_EY then ticker), per-market ranking, Financials/Utilities/Real Estate excluded, NO_SIGNAL gates, rf-floored mapping, goldens G1–G7 | AN | Arithmetic verified by throwaway script | done (claude/model-j) |
+| J-1 | QA spec tests before code review: goldens, ties, gates and precedence, rf threshold, FX, per-market independence, properties, engine PIT | QA | Written from the spec only | done (claude/model-j) |
+| J-2 | SW: `models/ebit_yield_roc.py`, `run_signals` mapping (EBIT via `flow_ttm`, balance sheet behind `bvps`), `j_*` columns in `screen_signals`, disclaimer "Model J is new and unvalidated (not backtested)"; no vote | SW | Suite + ruff green, FROZEN_V2 unchanged | done (claude/model-j) |
+| J-3 | QA external checks: EBIT TTM vs 10-K/10-Q (EDGAR, exact); EV vs Yahoo `enterpriseValue` (±10%) | QA | `docs/qa/model_j_validation.md` | partial: EDGAR check done; Yahoo EV check blocked (Yahoo HTTP 429 from the cloud container) |
+| J-4 | Live J signal counts per market + top 10 BUYs (unvalidated) | SW | Live DB run | todo: blocked in the cloud session (no caches, Yahoo throttled); run locally with `valuation value` |
+| J-5 | **J backtest: deferred per user.** Not in any in-sample or holdout run; the holdout and the frozen R2 models are untouched. A later run needs a pre-registered hypothesis (proposal §7: top-minus-bottom 3–6%/yr, IC 0.04–0.06; EY alone vs joint rank) and a user go-ahead | PM/QA | User go-ahead | deferred |
+| J-6 | 3-year average EBIT for `CYCLICAL_EBIT` names (needs > 2 years of TSX history); operating leases in EV | AN/SW | Spec 0.2.0 | todo |
+
 ## Decisions log
 - 2026-11-09: initial testing uses a ~2% subset of the universe (14 tickers, `universe/reference.csv`).
   The peer fair value is therefore mostly FEW_PEERS until P1-2.
@@ -147,6 +158,10 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
   bar cannot produce a PASS from the holdout. User approved a pre-registered H confirmation test (freeze §4.7: holdout
   12m IC > 0, BUY − SELL spread > 0, BUY excess vs SPX_TR > 0), recorded before any holdout result existed. Holdout
   run deferred until the user gives the go-ahead. Phase 10 stays blocked (a confirmed H is one model).
+- 2026-11-11: Model J (EBIT yield + ROC, `ebit_yield_roc` 0.1.0) specced, tested and wired into `screen_signals`
+  (`j_*` columns), shortlist item 2. Ranking per market (as C 0.2.0); not sector-neutral by design. Parameters are the
+  proposal's starting values, never tuned on the holdout; J is not part of FROZEN_V2. **J backtest deferred per user**;
+  J is labelled new and unvalidated. No vote.
 
 ## Next up (PM selection)
 1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.

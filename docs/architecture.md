@@ -3,7 +3,8 @@
 Status: as built on 2026-11-09 (book_value 0.2.0, Phase 6 data batch 1 + eligibility 0.1.0, Phase 7 Model A
 residual_income 0.1.0 + Model B peer_regression 0.1.0 book branch + report v2, Phase 8 backtest 0.1.0, Phase 9
 data batch 2 (ttm 0.2.0) + Model C composite 0.1.0 + benchmarks 0.1.1; revision round v2: A 0.2.0, B 0.2.0 diagnostic,
-C 0.2.0, H shareholder_yield 0.1.0, eligibility 0.1.1, frozen params `models/frozen.py`, one-shot holdout guard). Planned
+C 0.2.0, H shareholder_yield 0.1.0, eligibility 0.1.1, frozen params `models/frozen.py`, one-shot holdout guard;
+2026-11-11: J ebit_yield_roc 0.1.0, not frozen, not backtested). Planned
 components are dashed.
 
 ## Data flow
@@ -53,6 +54,7 @@ flowchart LR
         PB["Model B peer_regression 0.1.0<br/>Theil–Sen ln(P/B) ~ ROE per GICS sector<br/>(book branch; EV branch planned)"]
         CMP["Model C composite 0.2.0<br/>V/Q/M/R z per (market, sector), equal weights<br/>B/P in book sectors only; quintiles per market + vetoes"]
         SHY["Model H shareholder_yield 0.1.0<br/>SY = DPS/P + net buyback yield (same-source shares, split-adjusted)"]
+        EYR["Model J ebit_yield_roc 0.1.0 (unvalidated)<br/>rank EBIT/EV + rank EBIT/IC per market<br/>ex Financials/Utilities/Real Estate; rf-floored quintiles"]
         BMK["benchmarks 0.1.1<br/>SPX_TR, SPY/IVV/VOO, TSX, XIC/XIU/ZCN<br/>dist yield vs 10y, TR 1m-5y"]
         ELIG["eligibility 0.1.0<br/>config/liquidity.yaml"]
         TTM["ttm 0.2.0: flow_ttm (NI, CFO, capex, GP, ...), DPS_TTM"]
@@ -153,7 +155,7 @@ sequenceDiagram
     D-->>CLI: valuations, runs
     CLI->>CLI: eligibility filter, TTM NI, DPS, rf; write screen + coverage reports
     P->>Y: chart for 9 benchmarks (6y) → benchmarks_daily
-    CLI->>CLI: Model A per ticker, Model B per sector, Model C cross-section (per market), Model H per ticker; write screen_signals + benchmarks.csv
+    CLI->>CLI: Model A per ticker, Model B per sector, Model C cross-section (per market), Model H per ticker, Model J cross-section (per market); write screen_signals + benchmarks.csv
     CLI->>D: crosscheck / crosscheck --issuer (QA)
 ```
 

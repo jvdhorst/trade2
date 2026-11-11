@@ -64,6 +64,26 @@ specs is a new version that this protocol does not cover.
    them) or on data that removes the survivorship bias (P8-4) **plus** a fresh period.
 6. **Phase 10 gate:** the vote is built only if **≥ 2 of {A 0.2.0, C 0.2.0, H 0.1.0} PASS**. Model B is diagnostic
    and never counts. With fewer than 2 passes Phase 10 stays blocked and the screen shows each model separately.
+7. **Amendment 2026-11-10: pre-registered H confirmation test.** Added by the PM with user approval, **before any
+   holdout-period result was computed or seen** (the holdout command had not been run; `docs/qa/holdout_v2.md` did
+   not exist).
+   - **Why:** the §4.4 bar's IC leg is evaluated in-sample, and A 0.2.0, C 0.2.0 and H 0.1.0 all already fail it
+     there (`docs/qa/r2-insample.md`). The unchanged bar therefore cannot produce a PASS from this holdout run.
+     Model H was the only model with positive in-sample BUY excess vs SPX_TR, so it gets a confirmation test on
+     the holdout alone.
+   - **Test (H 0.1.0 only, frozen parameters unchanged, same single run as §4.2):** H is **holdout-confirmed** if,
+     over the holdout month-ends with a full 12-month forward return, **all three** hold:
+     1. holdout mean 12m rank IC of `h_score` > 0 (the "Mean IC" holdout row, 12m);
+     2. holdout mean 12m sector-neutral BUY − SELL spread > 0 (the "Mean spread" holdout row, 12m);
+     3. holdout mean 12m BUY excess vs SPX_TR > 0 (the holdout benchmark-excess section, BUY bucket, 12m).
+
+     No t-stat threshold; these are sign tests on data no one has seen. All three figures are already in the
+     holdout report; QA reads them and records the result in `docs/qa/holdout_v2.md`.
+   - **What it changes:** only H's status label. "Holdout-confirmed" is reported next to H's unchanged §4.4
+     verdict, which stays as computed. A and C are judged by the unchanged bar only. B stays diagnostic.
+   - **What it does not change:** the frozen parameters and their hash, the one-run rule (§4.2–4.3), the on-fail
+     rule (§4.5), and the Phase 10 gate (§4.6). A holdout-confirmed H is one model, so Phase 10 stays blocked.
+   - **Not run yet:** the user approved this test but asked that the holdout run wait for a separate go-ahead.
 
 ## 4a. Supplementary H test (added 2026-11-11, before any holdout computation)
 The user decided that the one-shot run also evaluates a pre-registered supplementary confirmation test for Model H. It is
@@ -71,6 +91,6 @@ defined in [`holdout_h_preregistration.md`](holdout_h_preregistration.md). The p
 Phase 10 gate above are unchanged. This is the only addition to §5.
 
 ## 5. What this protocol does not do
-It does not lower or reinterpret the bar, add criteria, or pick the best of several variants: each model has exactly
-one frozen variant. The survivor-bias caveat applies to the holdout too (about 4% of member-dates missing in 2023–2026,
+It does not lower or reinterpret the bar, or pick the best of several variants: each model has exactly one frozen
+variant. The only added criterion is the H confirmation test in §4.7, registered before the holdout was seen. The survivor-bias caveat applies to the holdout too (about 4% of member-dates missing in 2023–2026,
 phase8 §3).

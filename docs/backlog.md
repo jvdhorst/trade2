@@ -98,7 +98,7 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | R2-2 | SW: `ni_quarters` + one-off rule + `screen_signal` (A); `sub_industry` (B); `market`, bp gating, per-market stats (C); `models/shareholder_yield.py` + engine mapping (same-source shares, split factor); `liquidity.yaml` 274; report columns (`a_model_signal`, `h_*`, B diagnostic disclaimer) | SW | R2-1 green, ruff clean | done (claude/r2-implementation) |
 | R2-3 | SW: harness additions (freeze §3): model H + H_BBY/H_DY diagnostics, A backtest label = model label, holdout guard, thresholds hash incl. H | SW/QA | Guard tested (second holdout run refused) | done: `backtest run --holdout --freeze …` one-shot guard (`backtest/holdout.py`), tested with fixtures only; holdout NOT run |
 | R2-4 | QA: in-sample US backtest of the revised models, `docs/qa/backtest_v2_insample.md`; no change afterwards | QA | Report with both hashes | in-sample run done: `docs/qa/r2-insample.md` (in-sample only, not the verdict) |
-| R2-5 | QA: **single** holdout run (`report --holdout --today 2026-11-10`), `docs/qa/holdout_v2.md`; pass/fail per model vs the unchanged bar | QA | PM sign-off before the run; one `kind='holdout'` row | todo (after R2-4) |
+| R2-5 | QA: **single** holdout run (`report --holdout --today 2026-11-10`), `docs/qa/holdout_v2.md`; pass/fail per model vs the unchanged bar, plus the H confirmation test (freeze §4.7) | QA | User go-ahead before the run; one `kind='holdout'` row | todo: **waiting for the user's go-ahead** (R2-4 done, H test pre-registered) |
 | R2-6 | PM: Phase 10 gate decision from R2-5 (≥ 2 of A, C, H pass); failed models stay "unvalidated" | PM | Decision log entry | todo |
 | R2-7 | TSX GICS sub-industry for Financials (no source today: X.TO etc. stay in B's book branch) | SW/AN | Mapping file or source | todo |
 
@@ -143,6 +143,10 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
   B 0.2.0 (payments/exchanges to EV branch; **diagnostic only**), C 0.2.0 (B/P in book sectors only; per-market
   cross-section), eligibility E6 274, new Model H shareholder yield 0.1.0. Parameters frozen (SHA-256
   `6c6354c540bebc970709bc9a150b29db9e15d61a2b03f744de04ad21d0aa088e`). Holdout still unspent; one joint run after R2-4.
+- 2026-11-10: R2 merged (PR #9). In-sample, A 0.2.0, C 0.2.0 and H 0.1.0 all fail the bar's IC leg, so the unchanged
+  bar cannot produce a PASS from the holdout. User approved a pre-registered H confirmation test (freeze §4.7: holdout
+  12m IC > 0, BUY − SELL spread > 0, BUY excess vs SPX_TR > 0), recorded before any holdout result existed. Holdout
+  run deferred until the user gives the go-ahead. Phase 10 stays blocked (a confirmed H is one model).
 
 - 2026-11-11: holdout use (user decision). A, C and H all fail the in-sample IC leg, so none can PASS the
   unchanged bar. The one-shot holdout run is spent on a pre-registered supplementary confirmation test for H

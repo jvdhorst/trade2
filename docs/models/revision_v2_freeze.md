@@ -85,7 +85,16 @@ specs is a new version that this protocol does not cover.
      rule (§4.5), and the Phase 10 gate (§4.6). A holdout-confirmed H is one model, so Phase 10 stays blocked.
    - **Not run yet:** the user approved this test but asked that the holdout run wait for a separate go-ahead.
 
+## 4a. Addendum to §4.7 (2026-11-11, before any holdout computation)
+The test in §4.7 is the binding definition. [`holdout_h_preregistration.md`](holdout_h_preregistration.md) spells out
+how it is evaluated: which dates count, the reported-only metrics, the consequences and the caveats. It adds one rule,
+decided by the user before the holdout was seen:
+- **Minimum data:** if any of the three §4.7 criteria has fewer than **18** holdout dates with a defined 12m value, the
+  result is **INCONCLUSIVE** (not confirmed), and the holdout is spent all the same.
+
+Nothing else changes. The parameters, the hash, the `pass_bar` verdicts and the Phase 10 gate are as above.
+
 ## 5. What this protocol does not do
 It does not lower or reinterpret the bar, or pick the best of several variants: each model has exactly one frozen
-variant. The only added criterion is the H confirmation test in §4.7, registered before the holdout was seen. The survivor-bias caveat applies to the holdout too (about 4% of member-dates missing in 2023–2026,
+variant. The only added criterion is the H confirmation test in §4.7 (with its §4a minimum-data rule), registered before the holdout was seen. The survivor-bias caveat applies to the holdout too (about 4% of member-dates missing in 2023–2026,
 phase8 §3).

@@ -40,6 +40,9 @@ COLUMNS = [
     # v0.2.0: Model H columns (shareholder_yield.md §Backtest and report). SPEC-AMBIGUITY: the
     # spec lists them but not their position; placed before flags, like the Model C columns.
     "h_signal", "h_no_signal_reason", "h_sy", "h_dy", "h_bby", "h_payout", "h_sy_pct",
+    # Model J columns (ebit_yield_roc.md 0.1.0 §Report): after h_*, before flags
+    "j_signal", "j_no_signal_reason", "j_ey", "j_roc", "j_ev", "j_rank_ey", "j_rank_roc",
+    "j_pct",
     "flags",
 ]
 

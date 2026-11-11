@@ -90,8 +90,8 @@ map_signal(pct, ey, rf): "BUY"  if pct ≤ BUY_PCT  and ey ≥ rf + BUY_SPREAD
 ```
 Plain float comparisons, no epsilon (in IEEE doubles `0.035 + 0.03 == 0.065` and `0.09 + 0.03 == 0.12`, verified).
 Flags: `NEG_IC` (whenever IC is computed and ≤ 0, whatever the signal), `CYCLICAL_EBIT` (sector in
-`CYCLICAL_SECTORS`; informational: peak-cycle EBIT ranks high on both legs; the proposal's 3-year average EBIT is
-deferred because TSX Yahoo history is ~5 quarters), `TOP_PCT_LOW_YIELD` (`pct ≤ 0.20` but `ey < rf + 0.03`, so HOLD),
+`CYCLICAL_SECTORS`, set for every name of that sector whatever the signal; informational: peak-cycle EBIT ranks high on both legs; the proposal's 3-year average EBIT is
+deferred because TSX Yahoo history is ~5 quarters), `TOP_PCT_LOW_YIELD` (set only when `map_signal` runs, i.e. not under `SMALL_UNIVERSE`/`NO_RF`: `pct ≤ 0.20` but `ey < rf + 0.03`, so HOLD),
 plus the pass-through flags.
 
 ## Worked examples (golden values; relative tolerance 1e-9)

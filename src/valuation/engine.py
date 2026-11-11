@@ -14,7 +14,7 @@ import pandas as pd
 from . import ttm as ttm_mod
 from .models import book_value as bv
 from .models import eligibility as elig
-from .providers.base import ITEMS, NI_COMMON_Q, SHARES, TOTAL_EQUITY
+from .providers.base import CASH, EBIT_Q, ITEMS, NI_COMMON_Q, SHARES, TOTAL_DEBT, TOTAL_EQUITY
 
 SOURCE_PRIORITY = ("sec_edgar", "yahoo")  # official filings first
 
@@ -332,11 +332,15 @@ SIGNAL_COLUMNS = [
     "a_justified_pb", "b_signal", "b_no_signal_reason", "b_implied_upside", "b_resid_pct",
     "b_fitted_pb", "b_fair_value", "c_signal", "c_no_signal_reason", "c_score", "c_pct",
     "c_n_factors", "c_value", "c_quality", "c_momentum", "c_risk",
-    "h_signal", "h_no_signal_reason", "h_sy", "h_dy", "h_bby", "h_payout", "h_sy_pct", "flags",
+    "h_signal", "h_no_signal_reason", "h_sy", "h_dy", "h_bby", "h_payout", "h_sy_pct",
+    "j_signal", "j_no_signal_reason", "j_ey", "j_roc", "j_ev", "j_rank_ey", "j_rank_roc", "j_pct",
+    "flags",
 ]
 C_COLUMNS = ("c_signal", "c_no_signal_reason", "c_score", "c_pct", "c_n_factors", "c_value",
              "c_quality", "c_momentum", "c_risk")
 H_COLUMNS = ("h_signal", "h_no_signal_reason", "h_sy", "h_dy", "h_bby", "h_payout", "h_sy_pct")
+J_COLUMNS = ("j_signal", "j_no_signal_reason", "j_ey", "j_roc", "j_ev", "j_rank_ey", "j_rank_roc",
+             "j_pct")
 LABELS = ("BUY", "HOLD", "SELL", "NO_SIGNAL", "NOT_ELIGIBLE")
 RF_SERIES = {"TSX": "CA10Y", "US": "US10Y"}
 
@@ -455,6 +459,7 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
                 csm_path="universe/insurer_csm.csv") -> tuple[pd.DataFrame, dict]:
     """Model A + Model B for every security (or `tickers`), one report row each."""
     from .models import composite as cm
+    from .models import ebit_yield_roc as jm
     from .models import peer_regression as pr
     from .models import residual_income as ri
     from .models import shareholder_yield as sy
@@ -472,6 +477,7 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
     a_results: dict[str, ri.RIResult] = {}
     details: dict[str, dict] = {}
     h_inputs: dict[str, sy.SYInputs] = {}
+    j_inputs: list[jm.JInputs] = []
 
     def a_elig(e):
         return None if e is None else e.eligible
@@ -543,6 +549,21 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
         details[t].update({"h_shares_t": sh_t, "h_shares_prev": sh_prev, "h_split_factor": sf,
                            "h_period_end_prev": f_prev.period_end.isoformat() if f_prev
                            else None})
+        # Model J (ebit_yield_roc.md, Data mapping): balance sheet = the filing behind bvps.
+        # NO_TTM / STALE_TTM keep Model A's NI meaning; a missing EBIT TTM shows as NO_DATA.
+        j_flags = set(a.flags) & {"PIT_ESTIMATED", "NO_TTM", "STALE_TTM"}
+        ebit, ebit_pe = _flow(con, t, EBIT_Q, as_of, inp.reporting_currency, j_flags)
+        if ebit_pe is not None and ebit_pe != inp.period_end:
+            j_flags.add("EBIT_PERIOD_MISMATCH")
+        j_inputs.append(jm.JInputs(
+            ticker=t, market=market, sector=inp.sector, eligible=a_elig(e),
+            market_cap=inp.price * inp.shares_outstanding, fx_rate=inp.fx_rate, ebit_ttm=ebit,
+            total_debt=meta.get(TOTAL_DEBT), cash=meta.get(CASH),
+            total_equity=inp.total_equity, preferred=inp.preferred_equity,
+            nci=inp.noncontrolling_interest, flags=frozenset(j_flags)))
+        details[t].update({"j_ebit_ttm": ebit, "j_ebit_period_end": ebit_pe.isoformat()
+                           if ebit_pe else None, "j_total_debt": meta.get(TOTAL_DEBT),
+                           "j_cash": meta.get(CASH)})
 
     subs = dict(con.execute("SELECT ticker, gics_sub_industry FROM securities").fetchall())
     obs = [pr.PBObs(ticker=t, sector=a.sector, price=a.price, bvps=a.b0, roe=a.roe_raw,
@@ -561,12 +582,14 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
         h_pct.update(sy.sy_percentiles({t: h.sy for t, h in h_results.items()
                                         if h.sy is not None and h_inputs[t].market == m
                                         and h_inputs[t].eligible is True}))
+    rf_m = {m: risk_free(con, as_of, ccy) for m, ccy in (("TSX", "CAD"), ("US", "USD"))}
+    j_results = {r.ticker: r for r in jm.run_ebit_yield_roc(j_inputs, rf_m)}
 
     run_id = uuid.uuid4().hex[:12]
     con.execute("INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?)", [
         run_id, datetime.now(), as_of, "signals", _git_sha(),
         json.dumps({"models": [ri.MODEL_VERSION, pr.MODEL_VERSION, cm.MODEL_VERSION,
-                               sy.MODEL_VERSION],
+                               sy.MODEL_VERSION, jm.MODEL_VERSION],
                     "composite_stats": {"bounds": {"|".join(k): v
                                                    for k, v in c_stats.bounds.items()},
                                         "sectors": {"|".join(k): v.__dict__
@@ -618,6 +641,16 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
             label = "NO_SIGNAL" if eligible is True else "NOT_ELIGIBLE"
             rec.update({"h_signal": label,
                         "h_no_signal_reason": "NO_DATA" if label == "NO_SIGNAL" else None})
+        j = j_results.get(t)
+        if j is not None:
+            flags |= set(j.flags)
+            rec.update({"j_signal": j.signal, "j_no_signal_reason": j.no_signal_reason,
+                        "j_ey": j.ey, "j_roc": j.roc, "j_ev": j.ev, "j_rank_ey": j.rank_ey,
+                        "j_rank_roc": j.rank_roc, "j_pct": j.pct})
+        else:
+            label = "NO_SIGNAL" if eligible is True else "NOT_ELIGIBLE"
+            rec.update({"j_signal": label,
+                        "j_no_signal_reason": "NO_DATA" if label == "NO_SIGNAL" else None})
         rec["flags"] = ",".join(sorted(flags))
         records.append(rec)
         payload = {**rec, **details.get(t, {})}
@@ -634,14 +667,18 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
                             "a_roe_norm": a.roe_norm})
         if h is not None:
             payload.update({"h_eps_ttm": h.eps_ttm, "h_funded": h.funded})
+        if j is not None:
+            payload.update({"j_ic": j.ic, "j_combined": j.combined, "j_position": j.position,
+                            "j_n": j.n})
         con.execute("INSERT INTO signals VALUES (?,?,?,?,?,?,?)",
                     [run_id, t, as_of,
-                     f"{ri.MODEL_VERSION},{pr.MODEL_VERSION},{cm.MODEL_VERSION},{sy.MODEL_VERSION}",
+                     f"{ri.MODEL_VERSION},{pr.MODEL_VERSION},{cm.MODEL_VERSION},{sy.MODEL_VERSION},"
+                     f"{jm.MODEL_VERSION}",
                      rec["a_signal"], rec["b_signal"], json.dumps(payload, default=str)])
     df = pd.DataFrame.from_records(records, columns=SIGNAL_COLUMNS)
     counts: dict[str, dict[str, dict[str, int]]] = {}
     for model, col in (("A", "a_signal"), ("B", "b_signal"), ("C", "c_signal"),
-                       ("H", "h_signal")):
+                       ("H", "h_signal"), ("J", "j_signal")):
         counts[model] = {}
         for m in ("TSX", "US"):
             sub = df[df["market"] == m]

@@ -114,6 +114,19 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | J-7 | Data anomalies from J-3 (not fixed): CAT tags debt only in 10-Ks (10-Q quarters → J `NO_DATA`; carry-forward is a spec decision); CAT FY2025 D4 debt likely understated (current portion untagged) | AN/SW | Decision + ttm.md rule change | todo |
 | J-6 | 3-year average EBIT for `CYCLICAL_EBIT` names (needs > 2 years of TSX history); operating leases in EV | AN/SW | Spec 0.2.0 | todo |
 
+## Model G: Altman Z'' distress veto (spec [`docs/models/altman_z.md`](models/altman_z.md) v0.1.0; not frozen, not in FROZEN_V2)
+| ID | Task | Owner | Acceptance | Status |
+|---|---|---|---|---|
+| G-0 | Data batch 3 (`ttm.md` 0.3.0 §6): `current_assets` (`AssetsCurrent` / `quarterlyCurrentAssets`), `current_liabilities` (`LiabilitiesCurrent` / `quarterlyCurrentLiabilities`), `retained_earnings` (`RetainedEarningsAccumulatedDeficit` / `quarterlyRetainedEarnings`); same filing / source rule as §5.2; goldens G15–G18; cache keys bumped (EDGAR `CIK…_v4`, Yahoo `timeseries_v4`) | SW (spec), QA (fixtures), SW (code) | `tests/unit/test_data_batch3_spec.py` green | done (claude/model-g) |
+| G-1 | Spec `altman_z` 0.1.0 from proposal §4: X1–X4, Z'' (fixed evaluation order), zones 1.10 / 2.60 (both grey), Financials/Utilities/Real Estate excluded, precedence, SELL if Z'' < 1.10 else HOLD (no BUY), `CASH_RICH_OVERRIDE` (CFO_TTM/total_debt > 0.25: SELL → HOLD, veto off, zone unchanged, flagged), `NO_OVERRIDE_DATA`, `NEG_EQUITY`, `distress_veto`; goldens G1–G7 | AN | Arithmetic verified by throwaway script | done (claude/model-g) |
+| G-2 | QA spec tests before code: goldens, zone boundaries, override (strict 0.25), precedence, negative equity, missing data, properties, engine PIT | QA | Written from the spec only | done (claude/model-g) |
+| G-3 | SW: `models/altman_z.py`, `run_signals` mapping (balance sheet behind `bvps`; EBIT/CFO via `flow_ttm`), `g_*` columns incl. `g_distress_veto` in `screen_signals`, disclaimer "Model G is new and unvalidated (not backtested)"; no vote | SW | Suite + ruff green, FROZEN_V2 unchanged | done (claude/model-g) |
+| G-4 | QA external checks: X_i numerators/denominators vs 10-K/10-Q (exact), Z'' recomputed (1e-9) | QA | `docs/qa/model_g_validation.md` | see [`docs/qa/model_g_validation.md`](qa/model_g_validation.md) |
+| G-5 | Live G counts per market and distress list (unvalidated); run once `valuation ingest --refresh-fundamentals` so existing DBs get the batch-3 items | SW | Live DB run | todo: blocked in the cloud session (no caches, Yahoo throttled); run locally |
+| G-6 | **G backtest: deferred per user.** Not in any in-sample or holdout run; the holdout and frozen R2 models are untouched. A later run needs a pre-registered hypothesis (proposal §4: distress bucket lags sector median > 3%/yr, hit rate > 55%; veto improves the combined BUY bucket's 12m return in ≥ 60% of years) and a user go-ahead | PM/QA | User go-ahead | deferred |
+| G-7 | Veto in the combined vote (proposal §5): `g_distress_veto` is reported only; the vote is not built | PM/AN | Phase 10 design | todo (after Phase 10 gate) |
+| G-8 | Override for debt-free distressed names (0.1.0 cannot override when total_debt ≤ 0 or missing: `NO_OVERRIDE_DATA`) | AN | Spec 0.2.0 decision | todo |
+
 ## Decisions log
 - 2026-11-09: initial testing uses a ~2% subset of the universe (14 tickers, `universe/reference.csv`).
   The peer fair value is therefore mostly FEW_PEERS until P1-2.
@@ -173,3 +186,8 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.
 2. Phase 3 spec (AN): peer multiples, including an insurer-appropriate measure (adjusted BV with CSM).
 3. P2-8 non-common equity input.
+- 2026-11-11: Model G (Altman Z'' distress veto, `altman_z` 0.1.0) and data batch 3 (ttm 0.3.0: current assets,
+  current liabilities, retained earnings) specced, tested and wired into `screen_signals` (`g_*` columns incl.
+  `g_distress_veto`), shortlist item 3. No BUY; SELL in the distress zone unless `CASH_RICH_OVERRIDE`. Parameters are
+  Altman's published values and the proposal's override threshold, never tuned; G is not part of FROZEN_V2.
+  **G backtest deferred per user**; G is labelled new and unvalidated. No vote; the veto blocks nothing yet.

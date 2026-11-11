@@ -376,7 +376,7 @@ class EdgarProvider:
 
     def companyfacts(self, cik: str) -> dict:
         cik = str(cik).zfill(10)
-        key = f"CIK{cik}_v3"  # v3: trimmed set includes data batch 2 (ttm.md §5)
+        key = f"CIK{cik}_v4"  # v4: trimmed set includes data batch 3 (ttm.md §6)
         raw = self.cache.get(SOURCE, key)
         if raw is None:
             self.limiter.wait()

@@ -231,7 +231,10 @@ EDGAR beats Yahoo on a tie), so the new items always come from the **same filing
   `build_inputs`' filing and `meta` carry them). Adding items never changes which filing is selected (selection needs
   equity + shares only).
 - Yahoo: the three types are added to `TS_TYPES`; the timeseries cache key is bumped (`timeseries_v4`) so cached
-  responses without them are refetched once.
+  responses without them are refetched once. EDGAR: the trimmed companyfacts cache key is bumped (`CIK…_v4`).
+- **Existing databases** hold no batch-3 facts until each ticker is re-ingested: EDGAR is refetched only on a new
+  accession, so run `valuation ingest --refresh-fundamentals` once after upgrading (until then Model G is `NO_DATA`
+  for names whose filing predates the upgrade). Nothing is back-filled silently.
 
 ### Golden examples, data batch 3 (QA fixtures; $M; instant facts, `form` 10-Q/10-K, unit USD)
 **G15, EDGAR one filing.** Accession A (form 10-Q, filed 2026-11-01, balance-sheet date 2026-09-30):

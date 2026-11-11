@@ -144,6 +144,11 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
   cross-section), eligibility E6 274, new Model H shareholder yield 0.1.0. Parameters frozen (SHA-256
   `6c6354c540bebc970709bc9a150b29db9e15d61a2b03f744de04ad21d0aa088e`). Holdout still unspent; one joint run after R2-4.
 
+- 2026-11-11: holdout use (user decision). A, C and H all fail the in-sample IC leg, so none can PASS the
+  unchanged bar. The one-shot holdout run is spent on a pre-registered supplementary confirmation test for H
+  (`docs/models/holdout_h_preregistration.md`: holdout mean 12m IC > 0, spread > 0, BUY excess vs SPX_TR > 0;
+  INCONCLUSIVE if < 18 dates). The Phase 10 gate is unchanged and stays blocked.
+
 ## Next up (PM selection)
 1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.
 2. Phase 3 spec (AN): peer multiples, including an insurer-appropriate measure (adjusted BV with CSM).

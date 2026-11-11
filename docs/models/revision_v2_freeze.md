@@ -65,6 +65,11 @@ specs is a new version that this protocol does not cover.
 6. **Phase 10 gate:** the vote is built only if **≥ 2 of {A 0.2.0, C 0.2.0, H 0.1.0} PASS**. Model B is diagnostic
    and never counts. With fewer than 2 passes Phase 10 stays blocked and the screen shows each model separately.
 
+## 4a. Supplementary H test (added 2026-11-11, before any holdout computation)
+The user decided that the one-shot run also evaluates a pre-registered supplementary confirmation test for Model H. It is
+defined in [`holdout_h_preregistration.md`](holdout_h_preregistration.md). The parameters, hash, `pass_bar` verdicts and
+Phase 10 gate above are unchanged. This is the only addition to §5.
+
 ## 5. What this protocol does not do
 It does not lower or reinterpret the bar, add criteria, or pick the best of several variants: each model has exactly
 one frozen variant. The survivor-bias caveat applies to the holdout too (about 4% of member-dates missing in 2023–2026,

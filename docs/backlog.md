@@ -148,10 +148,10 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
   12m IC > 0, BUY − SELL spread > 0, BUY excess vs SPX_TR > 0), recorded before any holdout result existed. Holdout
   run deferred until the user gives the go-ahead. Phase 10 stays blocked (a confirmed H is one model).
 
-- 2026-11-11: holdout use (user decision). A, C and H all fail the in-sample IC leg, so none can PASS the
-  unchanged bar. The one-shot holdout run is spent on a pre-registered supplementary confirmation test for H
-  (`docs/models/holdout_h_preregistration.md`: holdout mean 12m IC > 0, spread > 0, BUY excess vs SPX_TR > 0;
-  INCONCLUSIVE if < 18 dates). The Phase 10 gate is unchanged and stays blocked.
+- 2026-11-11: H confirmation test merged (freeze §4.7, PR #10). Addendum (freeze §4a,
+  `docs/models/holdout_h_preregistration.md`): INCONCLUSIVE if any criterion has fewer than 18 holdout dates, plus the
+  evaluation detail and consequences. Both were registered before any holdout computation. The holdout run still
+  waits for the user's go-ahead.
 
 ## Next up (PM selection)
 1. Phase 6 (data batch 1 + eligibility filter). P2-9 sector gating is superseded by P7-5.

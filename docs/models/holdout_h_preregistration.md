@@ -1,4 +1,4 @@
-# Pre-registration: supplementary holdout confirmation test for Model H (v1)
+# Pre-registration detail: holdout confirmation test for Model H (freeze §4.7 + §4a)
 
 Owner: PM · Decided by the user on 2026-11-11 · Status: **frozen before any holdout computation**
 
@@ -18,12 +18,13 @@ Model H is the only model with a consistently positive in-sample profile:
 The user therefore chose to spend the one-shot holdout on a **pre-registered confirmation test for H**, defined
 here before anyone computes or sees a holdout-period number.
 
-This document **adds** a supplementary test. It does **not** change `revision_v2_freeze.md`:
+The binding test is `revision_v2_freeze.md` §4.7 (merged 2026-11-11). This document details how it is evaluated and adds
+one rule, the minimum-data rule (freeze §4a). It does **not** change anything else in `revision_v2_freeze.md`:
 - the frozen parameters and hash `6c6354c5…088e` are unchanged
 - the `pass_bar` verdicts are reported exactly as that document specifies
 - the Phase 10 gate (≥ 2 PASS under the bar) is unchanged
 
-This is the only exception to freeze §5 ("does not add criteria"), and it is recorded here with its reason.
+Freeze §5 records §4.7 and §4a as the only added criterion.
 
 ## The run
 Exactly the run in freeze §4.2: one `valuation backtest run --market US --holdout --freeze docs/models/revision_v2_freeze.md
@@ -38,7 +39,7 @@ A holdout date counts toward the test only if its 12m forward returns are comple
 names involved. Expect about 24 of the 36 dates (2023-11 … ~2025-10). Let `n12` be the number of such dates with a
 defined value for each metric below.
 
-H is **CONFIRMED (supplementary)** if and only if **all three** hold over the holdout dates at h = 12:
+H is **holdout-confirmed** (freeze §4.7) if and only if **all three** hold over the holdout dates at h = 12:
 
 | # | Metric (as defined in `backtest.md`) | Criterion |
 |---|---|---|
@@ -58,15 +59,15 @@ Rules:
   - n12 per metric
   - turnover
 
-**Outcome labels:** `CONFIRMED (supplementary)`, `NOT CONFIRMED`, or `INCONCLUSIVE`.
+**Outcome labels:** `holdout-confirmed`, `not confirmed`, or `inconclusive` (the minimum-data rule, freeze §4a).
 
 ## Consequences (decided now)
-- **CONFIRMED:**
-  - H is labelled *"holdout-supported (supplementary); not validated under the backtest.md bar"* in the screen,
+- **Holdout-confirmed:**
+  - H is labelled *"holdout-confirmed; not validated under the backtest.md bar"* in the screen,
     report and docs.
   - Its signals may be shown first in the human review queue, with that label and the survivor-bias caveat.
   - The Phase 10 vote stays blocked: H is not a PASS.
-- **NOT CONFIRMED or INCONCLUSIVE:** H stays *unvalidated*, like A and C.
+- **Not confirmed or inconclusive:** H stays *unvalidated*, like A and C.
 - **A 0.2.0, C 0.2.0 and B:** their holdout numbers and `pass_bar` verdicts are reported for the record only. They
   cannot pass (freeze §4.4), and no conclusion beyond "unvalidated" is drawn.
 - **Afterwards:**
@@ -75,6 +76,6 @@ Rules:
 
 ## Caveats stated in advance
 - **Survivorship:** the holdout carries the same survivor bias as phase8 §3 (about 4% of member-dates missing in 2023–2026).
-- **Sample size:** about 24 12-month observations that overlap heavily give low statistical power. CONFIRMED means "the in-sample sign held
+- **Sample size:** about 24 12-month observations that overlap heavily give low statistical power. "Holdout-confirmed" means "the in-sample sign held
   out of sample", not "statistically significant".
 - **One market:** US only. The TSX history is too short for a holdout.

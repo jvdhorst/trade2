@@ -16,6 +16,8 @@ from .base import (
     CAPEX_Q,
     CASH,
     CFO_Q,
+    CURRENT_ASSETS,
+    CURRENT_LIABILITIES,
     EBIT_Q,
     GOODWILL,
     GROSS_PROFIT_Q,
@@ -23,6 +25,7 @@ from .base import (
     NCI,
     NI_COMMON_Q,
     PREFERRED,
+    RETAINED_EARNINGS,
     REVENUE_Q,
     SHARES,
     TOTAL_ASSETS,
@@ -75,7 +78,11 @@ ST_DEBT_CHAIN = ("ShortTermBorrowings", "CommercialPaper")
 DEBT_CONCEPTS = ("DebtLongtermAndShorttermCombinedAmount", "LongTermDebtNoncurrent", "DebtCurrent",
                  "LongTermDebt", "LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligations",
                  "LongTermDebtAndCapitalLeaseObligationsCurrent", *ST_DEBT_CHAIN)
-CONCEPTS.update({c: "USD" for c in (ASSETS, *CASH_CHAIN, *DEBT_CONCEPTS)})
+# Data batch 3 (ttm.md §6): single tags, no chain, absent when untagged.
+BATCH3_CONCEPTS = {CURRENT_ASSETS: "AssetsCurrent", CURRENT_LIABILITIES: "LiabilitiesCurrent",
+                   RETAINED_EARNINGS: "RetainedEarningsAccumulatedDeficit"}
+CONCEPTS.update({c: "USD" for c in (ASSETS, *CASH_CHAIN, *DEBT_CONCEPTS,
+                                    *BATCH3_CONCEPTS.values())})
 
 
 def total_debt(at) -> float | None:
@@ -197,6 +204,7 @@ def parse_companyfacts(ticker: str, payload: dict) -> list[Fact]:
             GOODWILL: at("Goodwill"),
             INTANGIBLES: at("IntangibleAssetsNetExcludingGoodwill"),
             SHARES: shares,
+            **{item: at(c) for item, c in BATCH3_CONCEPTS.items()},
         }
         pe, fd = date.fromisoformat(end), date.fromisoformat(filed[accn])
         for item, v in items.items():

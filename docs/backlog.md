@@ -128,6 +128,21 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 | G-9 | Data anomalies from G-4 (not fixed): SBUX is HOLD only via the override (CFO/debt 0.375); with its 9,156M operating-lease liabilities counted as debt it would be 0.222 → SELL, and Yahoo `TotalDebt` sometimes includes leases (EDGAR vs Yahoo can flip the signal); CAT tags no debt in 10-Qs (a distressed filer like it would get `NO_OVERRIDE_DATA`); no G-specific staleness flag (SBUX balance sheet 136 days old at as_of) | AN/SW | Decision (leases in the override, debt carry-forward, staleness) | todo |
 | G-8 | Override for debt-free distressed names (0.1.0 cannot override when total_debt ≤ 0 or missing: `NO_OVERRIDE_DATA`) | AN | Spec 0.2.0 decision | todo |
 
+## Models D, E, F: dividend sustainability, Piotroski F-score, accruals (specs v0.1.0; not frozen, not in FROZEN_V2)
+Specs: [`dividend_sustainability.md`](models/dividend_sustainability.md), [`piotroski.md`](models/piotroski.md),
+[`accruals.md`](models/accruals.md). No new data: every input is already stored (ttm.md §5–§6, dividends, splits).
+| ID | Task | Owner | Acceptance | Status |
+|---|---|---|---|---|
+| DEF-0 | Specs from proposal §1–§3: D (payout, g_sust capped at 6%, g_hist / DIV_CUT, DY, implied return k, spread = k − r; V_DDM informational), E (9 binary signals, prior TTM from quarters ≤ t−4q, `PRIOR_TA_FALLBACK`, n_scored ≥ 8, Financials excluded), F (accrual ratio, percentile per (market, sector) ≥ 12 names, Financials excluded); NO_SIGNAL precedence, PIT rules, goldens | AN | Arithmetic verified by throwaway scripts | done (claude/models-def) |
+| DEF-1 | QA spec tests written from the specs only (unit + engine PIT/report) | QA | `tests/unit/test_{dividend_sustainability,piotroski,accruals}*_spec.py` green | done (claude/models-def) |
+| DEF-2 | SW: `models/dividend_sustainability.py`, `models/piotroski.py`, `models/accruals.py`; `run_signals` mapping (same-source prior filings by window, prior-year flow TTM, ex-date count, dividend coverage guard); `d_*`, `e_*`, `f_*` columns; disclaimer "Model D/E/F is new and unvalidated (not backtested)"; no vote | SW | Suite + ruff green, FROZEN_V2 unchanged | done (claude/models-def) |
+| DEF-3 | QA external checks (targeted EDGAR fetches, 2–3 US names per model) | QA | [`docs/qa/models_def_validation.md`](qa/models_def_validation.md) | see the validation doc (Yahoo legs blocked from the cloud container) |
+| DEF-4 | **D/E/F backtests deferred; to be run locally by the user.** Not in any in-sample or holdout run; the holdout and the frozen R2 models (A 0.2.0, C 0.2.0, H 0.1.0, B diagnostic) are untouched. Each needs a pre-registered hypothesis (proposal §1–§3, recorded in each spec) before any run | user / PM / QA | User run + pre-registration | deferred |
+| DEF-5 | Live D/E/F counts per market (unvalidated): run locally `valuation ingest` then `valuation value` | user | Live DB run | todo: blocked in the cloud session (no live DB, Yahoo throttled) |
+| DEF-6 | E `ANNUAL_PRIOR`: store annual flow totals (Yahoo `annual*`, EDGAR FY durations) so TSX names (Yahoo ~5 quarters) can get a prior TTM; until then most TSX names are E `NO_SIGNAL / F_INCOMPLETE` | AN/SW | ttm.md + piotroski.md 0.2.0 | todo |
+| DEF-7 | D `g_hist` over 3 years (needs dividend history > 2 years, proposal §13); D yield-trap detection beyond realised cuts | AN/SW | Spec 0.2.0 | todo |
+| DEF-8 | F: IFRS 16 / ASC 842 CFO break (2019) must be noted in any F backtest; TSX sectors often < 12 names (`SMALL_SECTOR`) | AN/QA | Backtest pre-registration | todo |
+
 ## Decisions log
 - 2026-11-09: initial testing uses a ~2% subset of the universe (14 tickers, `universe/reference.csv`).
   The peer fair value is therefore mostly FEW_PEERS until P1-2.
@@ -192,3 +207,8 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
   `g_distress_veto`), shortlist item 3. No BUY; SELL in the distress zone unless `CASH_RICH_OVERRIDE`. Parameters are
   Altman's published values and the proposal's override threshold, never tuned; G is not part of FROZEN_V2.
   **G backtest deferred per user**; G is labelled new and unvalidated. No vote; the veto blocks nothing yet.
+- 2026-11-12: Models D (`dividend_sustainability` 0.1.0), E (`piotroski` 0.1.0) and F (`accruals` 0.1.0) specced,
+  tested (QA from the specs) and wired into `screen_signals` (`d_*`, `e_*`, `f_*` columns). Parameters are the
+  proposal's starting values, never tuned on the holdout; D/E/F are not part of FROZEN_V2. F ranks per (market,
+  sector), a stated deviation from the proposal's pooled wording (consistent with C 0.2.0 / J). **D/E/F backtests
+  deferred; to be run locally by the user.** All three are labelled new and unvalidated. No vote.

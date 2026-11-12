@@ -63,10 +63,13 @@ def removal_summary(removal: dict[str, dict]) -> list[str]:
 SIGNALS_DISCLAIMER = (
     "Screening signals for human review, not investment advice. Models: residual_income/0.2.0, "
     "peer_regression/0.2.0, composite/0.2.0, shareholder_yield/0.1.0, ebit_yield_roc/0.1.0, "
-    "altman_z/0.1.0. "
+    "altman_z/0.1.0, dividend_sustainability/0.1.0, piotroski/0.1.0, accruals/0.1.0. "
     "as_of {as_of}. No combined vote (Phase 10). Model B is diagnostic only. "
     "Model J is new and unvalidated (not backtested). "
-    "Model G is new and unvalidated (not backtested)."
+    "Model G is new and unvalidated (not backtested). "
+    "Model D is new and unvalidated (not backtested). "
+    "Model E is new and unvalidated (not backtested). "
+    "Model F is new and unvalidated (not backtested)."
 )
 
 

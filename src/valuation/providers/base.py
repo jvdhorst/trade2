@@ -23,8 +23,12 @@ SHARES = "shares_outstanding"
 TOTAL_ASSETS = "total_assets"
 TOTAL_DEBT = "total_debt"
 CASH = "cash"
+# Data batch 3 balance-sheet items (spec docs/models/ttm.md §6, Model G); absent, never 0.
+CURRENT_ASSETS = "current_assets"
+CURRENT_LIABILITIES = "current_liabilities"
+RETAINED_EARNINGS = "retained_earnings"  # negative for an accumulated deficit
 ITEMS = (TOTAL_EQUITY, NCI, PREFERRED, GOODWILL, INTANGIBLES, SHARES, TOTAL_ASSETS, TOTAL_DEBT,
-         CASH)
+         CASH, CURRENT_ASSETS, CURRENT_LIABILITIES, RETAINED_EARNINGS)
 # Flow items: one discrete fiscal quarter each (spec docs/models/ttm.md §1, §5.1).
 NI_COMMON_Q = "ni_common_q"
 CFO_Q = "cfo_q"

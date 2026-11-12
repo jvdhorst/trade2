@@ -1,6 +1,7 @@
-# Data spec: quarterly flows (NI, CFO, capex, revenue, gross profit, EBIT), balance-sheet batch 2, TTM and DPS_TTM (`ttm`, v0.2.0)
+# Data spec: quarterly flows (NI, CFO, capex, revenue, gross profit, EBIT), balance-sheet batches 2–3, TTM and DPS_TTM (`ttm`, v0.3.0)
 
-Owner: SW (data spec, from proposal §0 / §8) · Tests: QA (`tests/unit/test_ttm_spec.py`, `tests/unit/test_data_batch2_spec.py`) ·
+Owner: SW (data spec, from proposal §0 / §8 / §13) · Tests: QA (`tests/unit/test_ttm_spec.py`, `tests/unit/test_data_batch2_spec.py`,
+`tests/unit/test_data_batch3_spec.py`) ·
 Code: `src/valuation/ttm.py`, `src/valuation/providers/sec_edgar.py`, `src/valuation/providers/yahoo.py`
 
 ## Purpose
@@ -203,6 +204,67 @@ end), 210, CAD, estimated) and (2026-09-30, filed **2026-11-05** (+45 = 2026-11-
 `revenue_q` (2026-09-30, 2026-11-05, 1200); balance sheet facts at period_end 2026-09-30, filed **2026-11-14**
 (+45, the balance sheet is not capped, §2): `total_assets` 9000, `total_debt` 2500, `cash` 300.
 
+## 6. Data batch 3 (v0.3.0, Model G): current assets, current liabilities, retained earnings
+Model G (`altman_z.md`) needs three more **instant** balance-sheet items (proposal §4, §13). Everything in §5.2 applies
+unchanged: EDGAR values are taken from one filing (one accession) at that filing's primary balance-sheet date
+(`parse_companyfacts`, the same `at(concept)` as `total_assets`), Yahoo values per quarter end with the +45-day estimate
+(`parse_balance_sheet`, `filed_estimated = True`, not capped at `_fetched`). Source selection is the balance-sheet rule
+`build_inputs` already applies to the whole filing (freshest `period_end` among filings with `filed_date ≤ as_of`;
+EDGAR beats Yahoo on a tie), so the new items always come from the **same filing** as `total_equity` and
+`total_assets`. No new selection rule.
+
+| Item | EDGAR concept (single tag, no chain) | Yahoo quarterly type (line item) |
+|---|---|---|
+| `current_assets` | `AssetsCurrent` | `quarterlyCurrentAssets` ("Current Assets") |
+| `current_liabilities` | `LiabilitiesCurrent` | `quarterlyCurrentLiabilities` ("Current Liabilities") |
+| `retained_earnings` | `RetainedEarningsAccumulatedDeficit` | `quarterlyRetainedEarnings` ("Retained Earnings") |
+
+- **Missing tag → absent**, never 0 and never derived (e.g. no `Assets − AssetsNoncurrent`). Unclassified balance
+  sheets (banks, insurers, many utilities and REITs) do not tag `AssetsCurrent`/`LiabilitiesCurrent`; the item is
+  simply absent for those filings. A filing that lacks one item still yields the others.
+- **Signs.** Stored as reported. `retained_earnings` is negative for an accumulated deficit (EDGAR reports the deficit
+  as a negative value of `RetainedEarningsAccumulatedDeficit`; Yahoo likewise). A positive current-liabilities value is
+  the normal case; a negative one is stored as is (an anomaly to report, not fixed).
+- **Value at another date only → absent.** As for every §5.2 item, a concept reported in the filing only at a date other
+  than the filing's balance-sheet date (e.g. only the prior year-end comparative) is absent for that filing.
+- Item names: `CURRENT_ASSETS, CURRENT_LIABILITIES, RETAINED_EARNINGS` in `providers/base.py`, added to `ITEMS` (so
+  `build_inputs`' filing and `meta` carry them). Adding items never changes which filing is selected (selection needs
+  equity + shares only).
+- Yahoo: the three types are added to `TS_TYPES`; the timeseries cache key is bumped (`timeseries_v4`) so cached
+  responses without them are refetched once. EDGAR: the trimmed companyfacts cache key is bumped (`CIK…_v4`).
+- **Existing databases** hold no batch-3 facts until each ticker is re-ingested: EDGAR is refetched only on a new
+  accession, so run `valuation ingest --refresh-fundamentals` once after upgrading (until then Model G is `NO_DATA`
+  for names whose filing predates the upgrade). Nothing is back-filled silently.
+
+### Golden examples, data batch 3 (QA fixtures; $M; instant facts, `form` 10-Q/10-K, unit USD)
+**G15, EDGAR one filing.** Accession A (form 10-Q, filed 2026-11-01, balance-sheet date 2026-09-30):
+`StockholdersEquity` 800 at 2026-09-30 and 760 at 2025-12-31; `Assets` 2000 (2026-09-30); `AssetsCurrent` 600 at
+2026-09-30 and 580 at 2025-12-31; `LiabilitiesCurrent` 500 (2026-09-30); `RetainedEarningsAccumulatedDeficit` 400
+(2026-09-30). → facts at period_end 2026-09-30, filed 2026-11-01, source `sec_edgar`, not estimated:
+`current_assets` **600** (not the 580 comparative), `current_liabilities` 500, `retained_earnings` 400,
+`total_assets` 2000, `total_equity` 800.
+
+**G16, EDGAR missing and negative.** As G15 but `RetainedEarningsAccumulatedDeficit` −1250 and no `AssetsCurrent` and no
+`LiabilitiesCurrent` → `retained_earnings` **−1250**; no `current_assets` and no `current_liabilities` fact at all (not
+0); `total_assets` 2000 still emitted. With `LiabilitiesCurrent` reported only at 2025-12-31 (500) → still no
+`current_liabilities` fact for this filing.
+
+**G17, Yahoo.** Timeseries payload (`_fetched` "2026-11-05", currencyCode CAD) with, at asOfDate 2026-09-30,
+`quarterlyTotalEquityGrossMinorityInterest` 800, `quarterlyOrdinarySharesNumber` 100, `quarterlyTotalAssets` 2000,
+`quarterlyCurrentAssets` 450, `quarterlyCurrentLiabilities` 600, `quarterlyRetainedEarnings` −100; at 2026-06-30 the same
+except no `quarterlyRetainedEarnings` point (and a point with `reportedValue` missing for `quarterlyCurrentAssets`).
+→ period 2026-09-30, filed **2026-11-14** (+45, not capped), CAD, `filed_estimated` True: `current_assets` 450,
+`current_liabilities` 600, `retained_earnings` **−100**. Period 2026-06-30: `current_liabilities` 600; **no**
+`retained_earnings` and **no** `current_assets` fact.
+
+**G18, engine point in time.** Ticker with an EDGAR filing (balance-sheet date 2026-06-30, filed 2026-08-01;
+`current_assets` 500, `current_liabilities` 300, `retained_earnings` 200) and a later one (2026-09-30, filed 2026-11-01;
+600 / 500 / 400), both with equity and shares. `build_inputs` at 2026-10-15 → meta `current_assets` 500,
+`current_liabilities` 300, `retained_earnings` 200; at 2026-11-09 → 600 / 500 / 400. A Yahoo filing for 2026-09-30
+(estimated filed 2026-11-14) is not visible at 2026-11-09; at 2026-11-20 the EDGAR filing still wins the tie on
+period_end 2026-09-30. If the selected filing lacks `retained_earnings`, meta `retained_earnings` is None (never taken
+from another filing or source).
+
 ## Golden examples (§1–§4)
 **G1, Q4 from FY − 9M (AAPL FY2026, values in $M).** Facts (start, end, val, filed):
 Q1 (2025-09-28, 2025-12-27, 42097, 2026-01-30); H1 YTD (2025-09-28, 2026-03-28, 71675, 2026-05-01);
@@ -239,6 +301,9 @@ value None, flags {NO_TTM}.
 1.54 + 1.64 + 1.64 + 1.76 = **6.58**.
 
 ## Changelog
+- **0.3.0:** data batch 3 (Model G): balance-sheet items `current_assets` (`AssetsCurrent` / `quarterlyCurrentAssets`),
+  `current_liabilities` (`LiabilitiesCurrent` / `quarterlyCurrentLiabilities`), `retained_earnings`
+  (`RetainedEarningsAccumulatedDeficit` / `quarterlyRetainedEarnings`); same filing and source rule as §5.2. Goldens G15–G18.
 - **0.2.0:** data batch 2 (Phase 9, P9-1): flow items `cfo_q`, `capex_q` (positive outflow), `revenue_q`,
   `gross_profit_q`, `ebit_q` with EDGAR tag chains and Yahoo types; balance-sheet items `total_assets`, `total_debt`
   (rules D1–D5), `cash`; generic `flow_ttm`. Goldens G8–G14.

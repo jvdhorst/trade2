@@ -17,6 +17,8 @@ from .base import (
     CAPEX_Q,
     CASH,
     CFO_Q,
+    CURRENT_ASSETS,
+    CURRENT_LIABILITIES,
     EBIT_Q,
     GOODWILL,
     GROSS_PROFIT_Q,
@@ -24,6 +26,7 @@ from .base import (
     NCI,
     NI_COMMON_Q,
     PREFERRED,
+    RETAINED_EARNINGS,
     REVENUE_Q,
     SHARES,
     TOTAL_ASSETS,
@@ -110,6 +113,9 @@ def parse_balance_sheet(ticker: str, bs: dict[str, dict[str, Any]], currency: st
             TOTAL_ASSETS: g.get("Total Assets"),
             TOTAL_DEBT: g.get("Total Debt"),
             CASH: g.get("Cash And Cash Equivalents"),
+            CURRENT_ASSETS: g.get("Current Assets"),
+            CURRENT_LIABILITIES: g.get("Current Liabilities"),
+            RETAINED_EARNINGS: g.get("Retained Earnings"),
         }
         for item, v in items.items():
             if v is not None:
@@ -157,6 +163,10 @@ TS_TYPES = {
     "quarterlyTotalAssets": "Total Assets",
     "quarterlyTotalDebt": "Total Debt",
     "quarterlyCashAndCashEquivalents": "Cash And Cash Equivalents",
+    # data batch 3 (spec docs/models/ttm.md §6)
+    "quarterlyCurrentAssets": "Current Assets",
+    "quarterlyCurrentLiabilities": "Current Liabilities",
+    "quarterlyRetainedEarnings": "Retained Earnings",
 }
 SPARK_MAX = 20  # Yahoo rejects more symbols per spark call
 # Income-statement types (spec docs/models/ttm.md §2); annual only identifies fiscal year ends.
@@ -432,7 +442,7 @@ class YahooProvider:
 
     def fundamentals(self, ticker: str, fallback_currency: str | None) -> list[Fact]:
         """Quarterly balance-sheet + NI facts via fundamentals-timeseries (fields we use only)."""
-        key = f"{ticker}.timeseries_v3"  # v3: data batch 2 (ttm.md §5)
+        key = f"{ticker}.timeseries_v4"  # v4: data batch 3 (ttm.md §6)
         raw = self.cache.get(SOURCE, key)
         if raw is None:
             p2 = int(time.time())

@@ -208,7 +208,7 @@ it does not test the `≥` boundary (G12 does).
 - `0 ≤ g_sust ≤ 0.06` whenever computed; `k ≥ dy` whenever computed.
 - Scaling price, dps_ttm, dps_ttm_prev **and** NI by c > 0 (roe_raw, shares, rf fixed) leaves payout, g_raw, g_sust,
   g_hist, dy, k, spread, mos and the signal unchanged (eps and v_ddm scale by c); changing the reporting currency with
-  a matching `fx_rate` (NI / fx fixed) leaves every output unchanged.
+  a matching `fx_rate` (NI × fx fixed, since eps = NI / shares × fx) leaves every output unchanged.
 - Lowering price (all else fixed) never moves BUY → HOLD/SELL or HOLD → SELL (payout and div_cut do not depend on price;
   k rises). Raising rf never moves SELL → HOLD/BUY or HOLD → BUY.
 - Replacing `v_ddm`/`mos` by anything never changes a signal (they are not read).

@@ -6,7 +6,7 @@ import json
 import subprocess
 import uuid
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import duckdb
 import pandas as pd
@@ -436,6 +436,46 @@ def shares_prev_filing(filings: list[bv.Filing], period_end_t: date,
     c = [f for f in filings if f.filed_date <= as_of and (f.data.get(SHARES) or 0) > 0
          and lo <= (period_end_t - f.period_end).days <= hi]
     return max(c, key=lambda f: (f.period_end, f.filed_date)) if c else None
+
+
+def filing_in_window(filings: list[bv.Filing], period_end_t: date, as_of: date,
+                     window: tuple[int, int]) -> bv.Filing | None:
+    """From ONE source's filings: the latest period_end in [period_end_t - hi, period_end_t - lo]
+    days (window = (lo, hi)), filed <= as_of; equal period_end -> later filed. None if none.
+    Models E and F (piotroski.md, accruals.md, Data mapping)."""
+    lo, hi = window
+    c = [f for f in filings if f.filed_date <= as_of
+         and lo <= (period_end_t - f.period_end).days <= hi]
+    return max(c, key=lambda f: (f.period_end, f.filed_date)) if c else None
+
+
+def flow_ttm_at(con, ticker: str, item: str, as_of: date, source: str,
+                end_window: tuple[date, date]):
+    """TTM of a flow item from ONE source's quarters, using only quarters with period_end <= the
+    latest known quarter end inside end_window (inclusive). Returns the TTMResult when its
+    period_end lies in the window, else None. Model E's prior TTM (piotroski.md, Data mapping)."""
+    rows = con.execute(
+        "SELECT period_end, filed_date, value, unit FROM fundamentals "
+        "WHERE ticker=? AND item=? AND source=? AND filed_date<=?",
+        [ticker, item, source, as_of]).fetchall()
+    qs = [_Q(pe, fd, v, u) for pe, fd, v, u in rows]
+    lo, hi = end_window
+    ends = [e for e in ttm_mod.latest_known(qs, as_of) if lo <= e <= hi]
+    if not ends:
+        return None
+    cut = max(ends)
+    res = ttm_mod.ttm([q for q in qs if q.period_end <= cut], as_of)
+    if res.value is None or res.period_end != cut:
+        return None
+    return res
+
+
+def ex_date_count(con, ticker: str, as_of: date) -> int:
+    """Distinct dividend ex-dates in (as_of - 365 days, as_of] (Model D, IRREGULAR_DIV)."""
+    row = con.execute(
+        "SELECT count(DISTINCT ex_date) FROM dividends WHERE ticker=? AND ex_date>? AND ex_date<=?",
+        [ticker, as_of - timedelta(days=365), as_of]).fetchone()
+    return int(row[0]) if row else 0
 
 
 def _ni_rows(con, ticker: str, as_of: date) -> dict[str, list]:

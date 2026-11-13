@@ -1,6 +1,6 @@
 # Spec: Per-company model fit (`fit`, v0.1.0)
 
-Owner: AN · Tests: QA (`tests/unit/test_fit_spec.py`, `test_fit_guard_spec.py`, `test_fit_screen_spec.py`, plus a
+Owner: AN · Tests: QA (`tests/unit/test_per_company_fit_spec.py`, `test_fit_holdout_guard_spec.py`, `test_screen_fit_spec.py`, `test_backtest_two_mode_spec.py`, the latter a
 whole-market reproduction check) · Code: `src/valuation/backtest/fit.py` (new), small additions to `runner.py`,
 `engine.py`, `report.py`, `cli_cmd.py`, `valuation/cli.py`, `valuation/report/screen.py` · Builds on `backtest.md`
 v0.2.0 (harness, `forward_returns`, rebalance calendar) · Source: user decision 2026-11-13.

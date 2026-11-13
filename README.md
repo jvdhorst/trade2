@@ -100,6 +100,30 @@ Fetch history is in the `fetch_log` table.
 
 For SEC EDGAR in production, set `VALUATION_SEC_USER_AGENT="<app> <contact email>"`, as SEC's fair-access policy asks.
 
+## Nightly updates (local workstation)
+Run the incremental update on weekdays after the market close and Yahoo's settlement, around **19:30 America/Toronto**.
+Prices update every run. Fundamentals and profiles refresh only when due, so a normal night takes a few minutes. Before
+the first scheduled run (and after new data fields are added, e.g. Model G), run once by hand:
+`uv run valuation ingest --refresh-fundamentals --universe universe/tsx_composite.csv` and the same for
+`universe/sp500.csv`.
+
+**Linux / macOS (cron).** Open the crontab with `crontab -e` and add the line below. Cron uses the machine's local time;
+the line assumes Toronto time. Replace both paths: cron's PATH is minimal, so use the full path from `which uv`. Create
+the log folder once with `mkdir -p logs`. On a Mac, cron fires only while the machine is awake.
+```bash
+30 19 * * 1-5 cd /path/to/trade2 && /path/to/uv run valuation ingest --universe universe/tsx_composite.csv && /path/to/uv run valuation ingest --universe universe/sp500.csv && /path/to/uv run valuation value --universe universe/sp500.csv >> logs/nightly.log 2>&1
+```
+
+**Windows (Task Scheduler).** Run this in PowerShell, with your own path:
+```powershell
+schtasks /Create /TN "trade2 nightly" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 19:30 /TR "powershell -NoProfile -Command \"cd C:\path\to\trade2; uv run valuation ingest --universe universe/tsx_composite.csv; uv run valuation ingest --universe universe/sp500.csv; uv run valuation value --universe universe/sp500.csv\""
+```
+
+**Check that it ran:** look at `logs/nightly.log`, the newest `reports/<date>/` folder, and the `fetch_log` table in
+`data/valuation.duckdb`. The nightly job runs ingest and valuation only; it never runs a backtest or touches the
+holdout. Fuller scripts (lock file, retry on Yahoo HTTP 429, log rotation, systemd/launchd templates) are planned in
+`docs/ops/nightly_update.md`.
+
 ## Data sources
 | Data | Source |
 |---|---|

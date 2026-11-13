@@ -31,6 +31,17 @@ MODELS = {"A": "Model A (residual income, model label incl. SELL)",
           "H_DY": "Model H part DY (dividend yield), diagnostic: IC only"}
 DIAGNOSTIC_MODELS = frozenset({"B", "A_BOOK", "BASELINE_PB", "C_V", "C_Q", "C_M", "C_R",
                                "H_BBY", "H_DY"})
+# per_company_fit.md §2.2: opt-in (`report --extra-models`) diagnostic rows for the unvalidated
+# models (not frozen, not in FROZEN_V2). Never a verdict; never computed on holdout dates.
+EXTRA_MODELS = {"J": "Model J (EBIT yield + ROC), UNVALIDATED, diagnostic, never a verdict",
+                "G": "Model G (Altman Z), UNVALIDATED, diagnostic, never a verdict",
+                "D": "Model D (dividend sustainability), UNVALIDATED, diagnostic, never a verdict",
+                "E": "Model E (Piotroski F-score), UNVALIDATED, diagnostic, never a verdict",
+                "F": "Model F (accruals), UNVALIDATED, diagnostic, never a verdict"}
+# label column, score column, score sign (score where the label is BUY/HOLD/SELL)
+EXTRA_SCORES = {"J": ("j_signal", "j_pct", -1.0), "G": ("g_signal", "g_z", 1.0),
+                "D": ("d_signal", "d_mos", 1.0), "E": ("e_signal", "e_f_score", 1.0),
+                "F": ("f_signal", "f_acc_pct", -1.0)}
 # Model H parts (freeze §3): IC only, so every scored name gets the neutral label HOLD
 H_PARTS = {"H_BBY": "h_bby", "H_DY": "h_dy"}
 # Model C diagnostic factors (composite.md, Data mapping / Backtest): label column, score column.
@@ -109,6 +120,14 @@ def model_panel(rows: pd.DataFrame, model: str) -> pd.DataFrame:
     elif model == "H":
         x["label"] = rows["h_signal"].fillna("NO_SIGNAL").to_numpy()
         x["score"] = np.where(rows["h_signal"].isin(m.SIGNALS), rows["h_score"], np.nan)
+    elif model in EXTRA_SCORES:
+        lab, sc, sign = EXTRA_SCORES[model]
+        labels = rows[lab] if lab in rows.columns else pd.Series(None, index=rows.index,
+                                                                   dtype=object)
+        score = (rows[sc].astype(float) if sc in rows.columns
+                 else pd.Series(np.nan, index=rows.index))
+        x["label"] = labels.fillna("NO_SIGNAL").to_numpy()
+        x["score"] = np.where(labels.isin(m.SIGNALS), sign * score, np.nan)
     elif model in H_PARTS:
         ok = rows["h_signal"].isin(m.SIGNALS) & rows[H_PARTS[model]].notna()
         x["label"] = np.where(ok, "HOLD", "NO_SIGNAL")
@@ -119,7 +138,11 @@ def model_panel(rows: pd.DataFrame, model: str) -> pd.DataFrame:
 
 
 def load_returns(con) -> pd.DataFrame:
-    r = con.execute("SELECT date, ticker, horizon, ret, flag FROM bt_returns").df()
+    """Whole-market horizons only (per_company_fit.md §2.2): the h = 1 rows written for the
+    per-company fit must never reach sector_excess, which takes horizons from the data."""
+    hs = ", ".join(str(h) for h in m.HORIZONS)
+    r = con.execute("SELECT date, ticker, horizon, ret, flag FROM bt_returns "
+                    f"WHERE horizon IN ({hs})").df()
     r["date"] = [_d(x) for x in r["date"]]
     return r
 

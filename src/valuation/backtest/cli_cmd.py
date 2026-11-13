@@ -1,4 +1,5 @@
-"""`valuation backtest build|run|report` (spec docs/models/backtest.md)."""
+"""`valuation backtest build|run|report|benchmarks|fit` (specs docs/models/backtest.md,
+docs/models/per_company_fit.md)."""
 
 from __future__ import annotations
 
@@ -42,7 +43,56 @@ def _write_holdout_result(path: Path, run_id: str, params_hash: str, results: di
     print(f"-> {path}")
 
 
+def fit_cmd(args) -> int:
+    """`valuation backtest fit` (per_company_fit.md §7.4, §10): per-company evaluation from the
+    stored rows. Never computes labels, never writes bt_runs, never reads holdout dates."""
+    from . import fit as F
+
+    if getattr(args, "holdout", False):
+        print("REFUSED: `backtest fit` never runs on the holdout (per_company_fit.md §7); "
+              "drop --holdout")
+        return 2
+    if args.universe != F.FIT_MARKET:
+        print(f"REFUSED: `backtest fit` is {F.FIT_MARKET} only (TSX history too short)")
+        return 2
+    ins = bte.in_sample_dates(bte.rebalance_dates(bte.BT_START, args.today))
+    if not ins or ins[-1] < F.FIT_LOCK_END:
+        print(f"REFUSED: with --today {args.today} the in-sample period ends "
+              f"{ins[-1] if ins else '-'}, before {F.FIT_LOCK_END}: {F.FIT_LOCK_END} would be a "
+              "holdout date (use --today on or after 2026-11-01)")
+        return 2
+    bt_path = Path(args.bt_db)
+    if not bt_path.exists():
+        print(f"REFUSED: backtest DB {bt_path} not found; {F.HINT}")
+        return 2
+    con = runner.connect_bt(bt_path)
+    try:
+        msg = F.check_preconditions(con)
+        if msg:
+            print(f"REFUSED: {msg}")
+            return 2
+        res = F.run_fit(con, args.today, Path(args.out))
+    finally:
+        con.close()
+    print(f"fit run {res['run_id']} ({F.FIT_MODEL_VERSION}, params {res['fit_params_hash'][:16]})"
+          f": {res['n_tickers']} tickers; BH family SELL_EXIT {res['n_family_sell_exit']}, "
+          f"BUY_ONLY {res['n_family_buy_only']}; CONFIRMED SELL_EXIT "
+          f"{res['n_confirmed_sell_exit']}, BUY_ONLY {res['n_confirmed_buy_only']}")
+    low = sorted(k for k, v in res["coverage"]["SEL"].items()
+                 if not (v >= 0.5) or not (res["coverage"]["CONF"][k] >= 0.5))
+    if low:
+        print("LOW_LABEL_COVERAGE (<50% of eligible member-dates labelled): " + ", ".join(low))
+    print(f"-> {res['csv']}\n-> {res['summary']}")
+    return 0
+
+
 def backtest_cmd(args) -> int:
+    if args.action == "fit":
+        return fit_cmd(args)
+    if getattr(args, "extra_models", False) and getattr(args, "holdout", False):
+        print("REFUSED: --extra-models with --holdout: the unvalidated models J, G, D, E, F are "
+              "never computed on holdout dates (per_company_fit.md §2.2)")
+        return 2
     bt_path = Path(args.bt_db)
     if args.action == "build":
         cache = RawCache()
@@ -138,11 +188,15 @@ def backtest_cmd(args) -> int:
     label = ("survivor-biased upper bound" if args.universe == "US"
              else "current constituents, survivor-biased")
     results = {}
-    for model, name in rep.MODELS.items():
+    models = dict(rep.MODELS)
+    if getattr(args, "extra_models", False):
+        models.update(rep.EXTRA_MODELS)
+    for model, name in models.items():
         res = rep.model_metrics(rows, fwd, model, ins, ho)
         results[model] = res
         h12 = res["in"]["h"][12]
-        tag = " [diagnostic, not a verdict]" if model in rep.DIAGNOSTIC_MODELS else ""
+        tag = (" [unvalidated, diagnostic, never a verdict]" if model in rep.EXTRA_MODELS
+               else " [diagnostic, not a verdict]" if model in rep.DIAGNOSTIC_MODELS else "")
         print(f"{name}{tag}: {res['pass'].result} failed={res['pass'].failed_legs} "
               f"incomplete={res['pass'].incomplete_legs} IC12 {h12['ic_mean']:.4f} "
               f"t {h12['ic_t']:.2f} spread12 {h12['mean_spread']:.4f}")
@@ -158,7 +212,11 @@ def backtest_cmd(args) -> int:
              f"In-sample dates: {ins[0] if ins else '-'} .. {ins[-1] if ins else '-'} "
              f"({len(ins)}); holdout: "
              + (f"{ho[0]} .. {ho[-1]} ({len(ho)})" if ho else "locked (not computed)"), ""]
-    for model, name in rep.MODELS.items():
+    if getattr(args, "extra_models", False):
+        parts += ["Models J, G, D, E, F (--extra-models) are unvalidated (not frozen, not in "
+                  "FROZEN_V2), in-sample diagnostics only, never a verdict; their whole-market "
+                  "hypotheses are not pre-registered.", ""]
+    for model, name in models.items():
         parts += [rep.render_model(results[model], name), ""]
     from ..benchmarks import primary_return_benchmark
 

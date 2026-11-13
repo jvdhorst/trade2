@@ -46,7 +46,9 @@ def main(argv: list[str] | None = None) -> int:
     pc.add_argument("--issuer", action="store_true",
                     help="compare against issuer BVPS and ROE (universe/issuer_sources.csv)")
     pb = sub.add_parser("backtest", help="Phase 8 backtest (spec docs/models/backtest.md)")
-    pb.add_argument("action", choices=["build", "run", "report", "benchmarks"])
+    pb.add_argument("action", choices=["build", "run", "report", "benchmarks", "fit"],
+                    help="fit = per-company model fit from stored rows "
+                         "(docs/models/per_company_fit.md)")
     pb.add_argument("--bt-db", default="data/backtest.duckdb")
     pb.add_argument("--market", dest="universe", choices=["US", "TSX"], default="US")
     pb.add_argument("--workers", type=int, default=4)
@@ -59,6 +61,9 @@ def main(argv: list[str] | None = None) -> int:
     pb.add_argument("--result", default="docs/qa/holdout_v2.md",
                     help="holdout result file; its existence blocks another holdout run")
     pb.add_argument("--out", default="reports/backtest")
+    pb.add_argument("--extra-models", action="store_true",
+                    help="report: add diagnostic rows for the unvalidated models J, G, D, E, F "
+                         "(never a verdict; refused with --holdout)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 

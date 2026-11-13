@@ -5,7 +5,8 @@ residual_income 0.1.0 + Model B peer_regression 0.1.0 book branch + report v2, P
 data batch 2 (ttm 0.2.0) + Model C composite 0.1.0 + benchmarks 0.1.1; revision round v2: A 0.2.0, B 0.2.0 diagnostic,
 C 0.2.0, H shareholder_yield 0.1.0, eligibility 0.1.1, frozen params `models/frozen.py`, one-shot holdout guard;
 2026-11-11: J ebit_yield_roc 0.1.0; data batch 3 (ttm 0.3.0) + G altman_z 0.1.0; J and G not frozen, not backtested;
-2026-11-12: D dividend_sustainability 0.1.0, E piotroski 0.1.0, F accruals 0.1.0; not frozen, not backtested). Planned
+2026-11-12: D dividend_sustainability 0.1.0, E piotroski 0.1.0, F accruals 0.1.0; not frozen, not backtested;
+2026-11-13: backtest 0.3.0 two-mode evaluation + per-company fit `fit/0.1.0`). Planned
 components are dashed.
 
 ## Data flow
@@ -72,12 +73,16 @@ flowchart LR
         BT["engine: month-end 2014→<br/>live run_signals per date (≤ d only)<br/>4 worker processes, resumable"]
         MET["metrics: fwd 3/6/12m returns, sector-neutral spread,<br/>hit rates, rank IC + Newey–West t, turnover,<br/>pass bar, low-P/B baseline; holdout locked"]
         BTR["reports/backtest/*.md<br/>docs/qa/backtest_model_a/b.md"]
+        LAB[("bt_rows: labels A,B,C,H + J,G,D,E,F (unvalidated)<br/>bt_returns h = 1,3,6,12 · bt_label_versions<br/>written once by backtest run")]
+        WME["whole-market evaluator: backtest report<br/>(h = 3/6/12 only; output unchanged)"]
+        PCE["per-company evaluator: backtest fit (fit/0.1.0)<br/>SELL_EXIT vs hold, 1m returns, 10 bp/switch<br/>select 2014-19 (BH q ≤ 0.10) → confirm 2020-23 (≥ 1%/yr)<br/>nothing after 2023-10-31"]
+        CMF[("company_model_fit + fit_runs<br/>reports/backtest/company_model_fit.csv")]
     end
 
     subgraph OUT["Outputs (reports/&lt;date&gt;/)"]
         SCR["screen_book_value.csv / .parquet"]
         COV["coverage_book_value.csv<br/>+ eligible, elig_fail_reason"]
-        SIG["screen_signals.csv / .parquet<br/>Models A/B/C: BUY / HOLD / SELL / NO_SIGNAL / NOT_ELIGIBLE<br/>benchmark header block (no vote until Phase 10)"]
+        SIG["screen_signals.csv / .parquet<br/>Models A/B/C/H/J/G/D/E/F: BUY / HOLD / SELL / NO_SIGNAL / NOT_ELIGIBLE<br/>+ per-company &lt;m&gt;_fit, &lt;m&gt;_highlight, highlight<br/>benchmark + fit header block (no vote until Phase 10)"]
         BCSV["benchmarks.csv"]
     end
 
@@ -118,7 +123,10 @@ flowchart LR
     BDB --> BT
     RI & PB --> BT
     CMP --> BT
-    BT --> MET --> BTR
+    BT --> LAB
+    LAB --> WME --> MET --> BTR
+    LAB --> PCE --> CMF
+    CMF -->|"value --fit: &lt;m&gt;_fit, highlight"| SIG
     SG --> IC
     VAL --> SCR & COV
     VAL --> XC
@@ -128,6 +136,23 @@ flowchart LR
 
     classDef planned stroke-dasharray: 5 5,fill:#f6f6f6,color:#666;
 ```
+
+## Two-mode backtest evaluation (spec `docs/models/per_company_fit.md`)
+```mermaid
+flowchart LR
+    RUN["valuation backtest run<br/>live run_signals per month-end (≤ d only)"] --> ROWS[("bt_rows<br/>per-date per-ticker labels<br/>A, B, C, H + J, G, D, E, F")]
+    RUN --> RET[("bt_returns<br/>forward returns h = 1, 3, 6, 12")]
+    RUN --> LV[("bt_label_versions<br/>+ part stamp label_versions")]
+    ROWS & RET --> WM["whole-market evaluator<br/>valuation backtest report<br/>pooled spread / IC / pass bar (h = 3/6/12)"]
+    ROWS & RET & LV --> PC["per-company evaluator<br/>valuation backtest fit<br/>per (ticker, model): SELL_EXIT / BUY_ONLY vs hold<br/>luck guard: select → BH → confirm; holdout lock"]
+    WM --> BM[("bt_metrics, bt_signals, bt_diagnostics<br/>reports/backtest/backtest_US_*.md")]
+    PC --> CF[("company_model_fit, fit_runs<br/>reports/backtest/company_model_fit.csv + .md")]
+    CF --> SF["screen filter: valuation value --fit<br/>attach_fit → &lt;m&gt;_fit (SELL_EXIT status), &lt;m&gt;_highlight,<br/>highlight (B excluded), highlight_models"]
+    SF --> SS["reports/&lt;date&gt;/screen_signals.csv / .parquet"]
+```
+Both evaluators read the same stored rows; neither recomputes labels. The whole-market output is reproduced exactly
+(QA regression with frozen digests). The per-company evaluator never writes `bt_runs`, never reads a date or exit
+after 2023-10-31, and refuses `--holdout`, `--market TSX` and a `--today` that would make 2023-10-31 a holdout date.
 
 ## Daily run (incremental)
 ```mermaid

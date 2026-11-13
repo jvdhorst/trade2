@@ -1,0 +1,23 @@
+# systemd user service for the trade2 nightly update. Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp scripts/systemd/trade2-nightly.{service,timer} ~/.config/systemd/user/
+#   edit ExecStart below: replace /path/to/trade2 with your checkout
+#   systemctl --user daemon-reload && systemctl --user enable --now trade2-nightly.timer
+#   loginctl enable-linger "$USER"     # run even when you are not logged in
+# Docs: docs/ops/nightly_update.md
+[Unit]
+Description=trade2 nightly market-data update (ingest + value)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/path/to/trade2/scripts/nightly_update.sh
+# The script finds uv in ~/.local/bin and ~/.cargo/bin itself; set PATH here if uv lives elsewhere.
+#Environment=PATH=/usr/local/bin:/usr/bin:/bin
+#Environment=TRADE2_DEEP_REFRESH_DAY=6
+#Environment="VALUATION_SEC_USER_AGENT=trade2-screener you@example.com"
+#Environment="TRADE2_NOTIFY_CMD=curl -fsS -d \"trade2 nightly failed: $TRADE2_FAILED_STEPS\" https://ntfy.sh/your-topic"
+# Ingest of ~720 tickers plus one retry; generous ceiling so a hung fetch can't run forever.
+TimeoutStartSec=3h
+Nice=10

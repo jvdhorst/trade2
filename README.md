@@ -138,4 +138,10 @@ universe/     reference.csv                    14-ticker initial-testing subset 
               benchmarks.csv                   benchmark keys/symbols/roles (spec benchmarks.md)
 ```
 
+## Nightly updates
+To refresh market data automatically every weekday evening on your own machine (Linux, macOS or Windows), schedule
+[`scripts/nightly_update.sh`](scripts/nightly_update.sh) or [`scripts/nightly_update.ps1`](scripts/nightly_update.ps1).
+They ingest both universes and run `valuation value`, with a lock, one retry, logs in `logs/` and no backtests.
+Setup for cron, systemd, launchd and Task Scheduler: [`docs/ops/nightly_update.md`](docs/ops/nightly_update.md).
+
 *Not investment advice.*

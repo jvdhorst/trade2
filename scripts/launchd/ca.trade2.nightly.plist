@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent for the trade2 nightly update (macOS). Install:
+    1. Replace every /path/to/trade2 below with your checkout (avoid ~/Documents, ~/Desktop,
+       ~/Downloads: macOS privacy protection blocks background jobs there without Full Disk Access).
+    2. cp scripts/launchd/ca.trade2.nightly.plist ~/Library/LaunchAgents/
+    3. launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ca.trade2.nightly.plist
+  StartCalendarInterval uses the Mac's local time zone. 19:30 assumes the Mac is set to Eastern
+  time; otherwise convert. A fire missed while the Mac sleeps runs on wake; one missed while it
+  is off does not run. Docs: docs/ops/nightly_update.md
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ca.trade2.nightly</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/path/to/trade2/scripts/nightly_update.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/path/to/trade2</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- launchd's default PATH is /usr/bin:/bin:/usr/sbin:/sbin. The script also checks
+             ~/.local/bin, ~/.cargo/bin, /opt/homebrew/bin and /usr/local/bin for uv. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Optional:
+        <key>TRADE2_DEEP_REFRESH_DAY</key><string>5</string>
+        <key>VALUATION_SEC_USER_AGENT</key><string>trade2-screener you@example.com</string>
+        <key>TRADE2_NOTIFY_CMD</key><string>osascript -e 'display notification "nightly update failed" with title "trade2"'</string>
+        -->
+    </dict>
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>19</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>19</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>19</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>19</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>19</integer><key>Minute</key><integer>30</integer></dict>
+    </array>
+    <!-- The script writes logs/nightly_<date>.log itself; this catches anything before that. -->
+    <key>StandardOutPath</key>
+    <string>/path/to/trade2/logs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/path/to/trade2/logs/launchd.err.log</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>Nice</key>
+    <integer>10</integer>
+</dict>
+</plist>

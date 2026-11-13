@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 data/
 reports/
+logs/
 !reports/.gitkeep
 *.duckdb
 *.duckdb.wal

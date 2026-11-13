@@ -38,6 +38,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="manual insurer CSM input (Model A/B, spec residual_income.md)")
     pv.add_argument("--no-signals", action="store_true",
                     help="skip Model A/B and screen_signals (book_value report only)")
+    pv.add_argument("--fit", default="reports/backtest/company_model_fit.csv",
+                    help="per-company fit results (written by `valuation backtest fit`); "
+                         "missing -> every <m>_fit = NOT_TESTED")
     pu = sub.add_parser("universe", help="rebuild TSX Composite + S&P 500 lists")
     pu.add_argument("--out", default="universe")
     pc = sub.add_parser("crosscheck", help="compare book_value vs Yahoo reference metrics")
@@ -115,21 +118,34 @@ def main(argv: list[str] | None = None) -> int:
         for k, v in sorted(info["skipped"].items()):
             print(f"  skipped {k}: {v}")
         if not args.no_signals:
+            from .backtest.engine import label_versions
             from .benchmarks import benchmark_table, header_lines
             from .engine import run_signals
-            from .report.screen import signal_summary, write_benchmarks, write_signals
+            from .report.screen import (
+                attach_fit,
+                fit_summary,
+                load_fit,
+                signal_summary,
+                write_benchmarks,
+                write_signals,
+            )
 
             sdf, sinfo = run_signals(con, args.as_of, tickers,
                                      liquidity=load_config(args.liquidity), csm_path=args.csm)
+            # per_company_fit.md §9: per-company fit columns from the latest fit CSV
+            sdf, fit_header = attach_fit(sdf, load_fit(args.fit), label_versions())
             btab = benchmark_table(con, args.as_of)
             b_path = write_benchmarks(btab, args.as_of, args.out)
-            s_csv, s_pq = write_signals(sdf, args.as_of, args.out, header=header_lines(btab))
+            s_csv, s_pq = write_signals(sdf, args.as_of, args.out, header=header_lines(btab),
+                                        fit_header=fit_header)
             print(f"benchmarks -> {b_path}")
             print(f"signals run {sinfo['run_id']}: {len(sdf)} rows -> {s_csv}, {s_pq}")
             for s, f in sorted(sinfo["fits"].items()):
                 r2 = "n/a" if f.r2 is None else f"{f.r2:.3f}"
                 print(f"  model B fit {s}: {f.status}, n_fit {f.n_fit}, R2 {r2}")
             for line in signal_summary(sinfo["counts"]):
+                print(line)
+            for line in [*fit_header, *fit_summary(sdf)]:
                 print(line)
     elif args.cmd == "universe":
         from .ingest.universe_build import build

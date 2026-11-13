@@ -111,12 +111,12 @@ the first scheduled run (and after new data fields are added, e.g. Model G), run
 the line assumes Toronto time. Replace both paths: cron's PATH is minimal, so use the full path from `which uv`. Create
 the log folder once with `mkdir -p logs`. On a Mac, cron fires only while the machine is awake.
 ```bash
-30 19 * * 1-5 cd /path/to/trade2 && /path/to/uv run valuation ingest --universe universe/tsx_composite.csv && /path/to/uv run valuation ingest --universe universe/sp500.csv && /path/to/uv run valuation value --universe universe/sp500.csv >> logs/nightly.log 2>&1
+30 19 * * 1-5 cd /path/to/trade2 && /path/to/uv run valuation ingest --universe universe/tsx_composite.csv && /path/to/uv run valuation ingest --universe universe/sp500.csv && /path/to/uv run valuation value >> logs/nightly.log 2>&1
 ```
 
 **Windows (Task Scheduler).** Run this in PowerShell, with your own path:
 ```powershell
-schtasks /Create /TN "trade2 nightly" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 19:30 /TR "powershell -NoProfile -Command \"cd C:\path\to\trade2; uv run valuation ingest --universe universe/tsx_composite.csv; uv run valuation ingest --universe universe/sp500.csv; uv run valuation value --universe universe/sp500.csv\""
+schtasks /Create /TN "trade2 nightly" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 19:30 /TR "powershell -NoProfile -Command \"cd C:\path\to\trade2; uv run valuation ingest --universe universe/tsx_composite.csv; uv run valuation ingest --universe universe/sp500.csv; uv run valuation value\""
 ```
 
 **Check that it ran:** look at `logs/nightly.log`, the newest `reports/<date>/` folder, and the `fetch_log` table in

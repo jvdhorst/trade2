@@ -32,7 +32,7 @@ Written by the coordinating PM session so work can continue in a fresh session. 
 | Session | ID | Branch | Scope |
 |---|---|---|---|
 | PM - Per-company model fit phase | `session_01TwUhobmujgFvZE4AjG9TKp` | `claude/per-company-fit` | AN (on **Fable**): `docs/models/per_company_fit.md`. Fitness = signal strategy (hold unless SELL; plus a BUY-only variant) vs holding the stock. Select on 2014–2019, confirm on 2020–2023 with FDR. Holdout excluded. SW: two-mode evaluation (whole-market unchanged + per-company), J/G/D/E/F added to the harness, `company_model_fit` table, and screen `<m>_fit` + `highlight` columns. No runs in the cloud. Opens a PR and stops. |
-| SW - Nightly local market-data update | `session_01TwUhociYMk8RBcDQZ3a5z5` | `claude/nightly-update` | `scripts/nightly_update.sh/.ps1` (lock, retry, logs, optional notify), cron/systemd/launchd/Task Scheduler templates, `docs/ops/nightly_update.md`. Opens a PR and stops. |
+| SW - Nightly local market-data update (PR #15 open) | `session_01TwUhociYMk8RBcDQZ3a5z5` | `claude/nightly-update` | `scripts/nightly_update.sh/.ps1` (lock, retry, logs, optional notify), cron/systemd/launchd/Task Scheduler templates, `docs/ops/nightly_update.md`. Opens a PR and stops. |
 
 The coordinating session scheduled a check for these PRs (around 06:03 UTC on 2026-11-13). A fresh coordinator should
 list open PRs, `subscribe_pr_activity` to them, and summarize them for the user.
@@ -57,7 +57,7 @@ list open PRs, `subscribe_pr_activity` to them, and summarize them for the user.
 uv sync
 uv run valuation ingest --refresh-fundamentals --universe universe/tsx_composite.csv   # once, then nightly without the flag
 uv run valuation ingest --refresh-fundamentals --universe universe/sp500.csv
-uv run valuation value --universe universe/sp500.csv          # reports/<date>/screen_signals.csv
+uv run valuation value          # reports/<date>/screen_signals.csv
 uv run valuation backtest build && uv run valuation backtest benchmarks
 uv run valuation backtest run --workers 4 && uv run valuation backtest report   # in-sample only
 # ONLY on explicit go-ahead (one shot, spends the holdout):

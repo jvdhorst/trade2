@@ -146,6 +146,15 @@ Specs: [`dividend_sustainability.md`](models/dividend_sustainability.md), [`piot
 | DEF-7 | D `g_hist` over 3 years (needs dividend history > 2 years, proposal §13); D yield-trap detection beyond realised cuts | AN/SW | Spec 0.2.0 | todo |
 | DEF-8 | F: IFRS 16 / ASC 842 CFO break (2019) must be noted in any F backtest; TSX sectors often < 12 names (`SMALL_SECTOR`) | AN/QA | Backtest pre-registration | todo |
 
+## Per-company model fit (spec [`docs/models/per_company_fit.md`](models/per_company_fit.md) v0.1.0; in-sample only, holdout locked)
+| ID | Task | Owner | Acceptance | Status |
+|---|---|---|---|---|
+| PCF-0 | Spec: per-company fit (SELL_EXIT primary, BUY_ONLY reported), windows 2014-01…2019-10 / 2020-01…2023-08, BH q 0.10, min effect 1%/yr, holdout guard, `company_model_fit`, screen `<m>_fit` / highlight | AN | PR reviewed by PM/QA | done (this PR) |
+| PCF-1 | QA spec tests before code: goldens G1–G7, fit params hash, holdout guard + leak test, whole-market reproduction check, screen merge | QA | Written from the spec, red before PCF-2 | todo |
+| PCF-2 | SW: `bt_rows` J/G/D/E/F columns, stamp + `bt_label_versions`, h = 1 returns, `report.load_returns` horizon filter, `--extra-models`; `backtest/fit.py`; `backtest fit` CLI; `value --fit` + `attach_fit` | SW | PCF-1 green, ruff clean; default `report` output unchanged | todo |
+| PCF-3 | QA: in-sample `backtest run` (re-runs all dates once) + `backtest fit`; label coverage per model (data batch 2–3 inputs in the backtest DB, rebuild if needed); `docs/qa/per_company_fit.md` | QA | Report with fit params hash; no threshold changed afterwards | todo |
+| PCF-4 | Later (diagnostic only): rolling windows; short-rate cash series; market-relative SELL_EXIT variant | AN | New spec version | backlog |
+
 ## Decisions log
 - 2026-11-09: initial testing uses a ~2% subset of the universe (14 tickers, `universe/reference.csv`).
   The peer fair value is therefore mostly FEW_PEERS until P1-2.

@@ -22,7 +22,7 @@ import pandas as pd
 from .data import sic_to_sector  # noqa: F401  (public API, spec §6)
 from .membership import members_on
 
-MODEL_VERSION = "backtest/0.2.0"
+MODEL_VERSION = "backtest/0.3.0"
 BT_START = REBALANCE_START = date(2014, 1, 1)
 HOLDOUT_MONTHS = 36
 SOURCE_TABLES = ("securities", "prices_daily", "fundamentals", "dividends", "splits",
@@ -60,6 +60,34 @@ C_ROW_COLS = list(C_ROW_TYPES)
 # Model H (revision_v2_freeze.md §3): label, score SY, and its two parts (diagnostics)
 H_ROW_TYPES = {"h_signal": "VARCHAR", "h_score": "DOUBLE", "h_dy": "DOUBLE", "h_bby": "DOUBLE"}
 H_ROW_COLS = list(H_ROW_TYPES)
+# per_company_fit.md §2.1: labels + scores of the unvalidated models J, G, D, E, F (not frozen,
+# not in FROZEN_V2), copied from the same run_signals report row; A/B/C/H are unchanged.
+X_ROW_TYPES = {"j_signal": "VARCHAR", "j_pct": "DOUBLE", "g_signal": "VARCHAR", "g_z": "DOUBLE",
+               "d_signal": "VARCHAR", "d_mos": "DOUBLE", "e_signal": "VARCHAR",
+               "e_f_score": "DOUBLE", "f_signal": "VARCHAR", "f_acc_pct": "DOUBLE"}
+X_ROW_COLS = list(X_ROW_TYPES)
+LABEL_VERSIONS_DDL = """CREATE TABLE IF NOT EXISTS bt_label_versions (universe VARCHAR,
+    model VARCHAR, model_version VARCHAR, PRIMARY KEY (universe, model))"""
+
+
+def label_versions() -> dict[str, str]:
+    """model -> that model module's MODEL_VERSION, for the nine labelled models (fit order)."""
+    from ..models import (
+        accruals,
+        altman_z,
+        composite,
+        dividend_sustainability,
+        ebit_yield_roc,
+        peer_regression,
+        piotroski,
+        residual_income,
+        shareholder_yield,
+    )
+
+    mods = {"A": residual_income, "B": peer_regression, "C": composite, "H": shareholder_yield,
+            "J": ebit_yield_roc, "G": altman_z, "D": dividend_sustainability, "E": piotroski,
+            "F": accruals}
+    return {k: v.MODEL_VERSION for k, v in mods.items()}
 
 
 def month_end(y: int, m: int) -> date:
@@ -205,7 +233,8 @@ def run_one(db_path: str, d: date, tickers: list[str], csm_path=None) -> tuple[d
             r.get("c_quality"), r.get("c_momentum"), r.get("c_risk"),
             *[(p.get("c_factor_labels") or {}).get(k)
               for k in ("value", "quality", "momentum", "risk")],
-            r.get("h_signal"), r.get("h_sy"), r.get("h_dy"), r.get("h_bby")])
+            r.get("h_signal"), r.get("h_sy"), r.get("h_dy"), r.get("h_bby"),
+            *[r.get(c) for c in X_ROW_COLS]])
     return d, rows, time.time() - t0
 
 
@@ -231,7 +260,9 @@ def run_backtest(db_path: str, universe: str, members_by_date: dict[date, list[s
     parts = _part_dir(db_path, universe)
     from ..models.frozen import FROZEN_V2, params_sha256
 
-    stamp = {"version": run_model_version(), "params_hash": params_sha256(FROZEN_V2)}
+    # per_company_fit.md §2.1: the stamp also covers the J-F label versions
+    stamp = {"version": run_model_version(), "params_hash": params_sha256(FROZEN_V2),
+             "label_versions": label_versions()}
 
     def done(d: date) -> bool:  # a part from another code/parameter version is re-run
         p = parts / f"{d.isoformat()}.json"
@@ -261,7 +292,8 @@ def run_backtest(db_path: str, universe: str, members_by_date: dict[date, list[s
     for ddl in BT_DDL:
         con.execute(ddl)
     have = {r[0] for r in con.execute("DESCRIBE bt_rows").fetchall()}
-    for col, typ in {**C_ROW_TYPES, **H_ROW_TYPES}.items():  # bt_rows from earlier phases
+    # bt_rows from earlier phases (C/H, then the J-F columns of per_company_fit.md §2.1)
+    for col, typ in {**C_ROW_TYPES, **H_ROW_TYPES, **X_ROW_TYPES}.items():
         if col not in have:
             con.execute(f"ALTER TABLE bt_rows ADD COLUMN {col} {typ}")
     con.execute("DELETE FROM bt_rows WHERE universe=?", [universe])
@@ -276,12 +308,17 @@ def run_backtest(db_path: str, universe: str, members_by_date: dict[date, list[s
     cols = ["universe", "date", "ticker", "market", "sector", "eligible", "elig_fail_reason",
             "price", "bvps", "pb", "roe0", "roe_raw", "a_signal", "a_reason", "a_mos",
             "b_signal", "b_reason", "b_residual", "b_resid_pct", "b_upside", "b_n_fit", "b_r2",
-            "flags", *C_ROW_COLS, *H_ROW_COLS]
+            "flags", *C_ROW_COLS, *H_ROW_COLS, *X_ROW_COLS]
+    recs = [r + [None] * (len(cols) - len(r)) for r in recs]  # defensive: older part layout
     df = pd.DataFrame(recs, columns=cols)
     con.register("_df", df)
     con.execute(f"INSERT INTO bt_rows ({', '.join(cols)}) SELECT * FROM _df")
     con.unregister("_df")
     con.executemany("INSERT INTO bt_dates VALUES (?,?,?,?,?)", dates)
+    con.execute(LABEL_VERSIONS_DDL)  # §2.1.3: rewritten from the common stamp
+    con.execute("DELETE FROM bt_label_versions WHERE universe=?", [universe])
+    con.executemany("INSERT INTO bt_label_versions VALUES (?,?,?)",
+                    [[universe, k, v] for k, v in stamp["label_versions"].items()])
     con.close()
     return {"ran": len(todo), "seconds": ran,
             "cpu_seconds": sum(r[4] for r in dates)}

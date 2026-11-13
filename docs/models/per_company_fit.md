@@ -56,7 +56,9 @@ values as sorted lists). Its canonical JSON (`valuation.models.frozen.canonical_
 ```
 {"FIT_CAN_EMIT":{"A":["BUY_ONLY","SELL_EXIT"],"B":["BUY_ONLY","SELL_EXIT"],"C":["BUY_ONLY","SELL_EXIT"],"D":["BUY_ONLY","SELL_EXIT"],"E":["BUY_ONLY","SELL_EXIT"],"F":["BUY_ONLY","SELL_EXIT"],"G":["SELL_EXIT"],"H":["BUY_ONLY","SELL_EXIT"],"J":["BUY_ONLY","SELL_EXIT"]},"FIT_CASH_RATE":0.0,"FIT_CONF_END":"2023-10-31","FIT_CONF_MIN_ACTIVE":3,"FIT_CONF_MIN_MONTHS":24,"FIT_CONF_MIN_SWITCHES":1,"FIT_CONF_START":"2020-01-31","FIT_COST_BP":10,"FIT_HORIZON":1,"FIT_INITIAL_POSITION":1,"FIT_LOCK_END":"2023-10-31","FIT_MARKET":"US","FIT_MIN_EFFECT":0.01,"FIT_MODELS":["A","B","C","H","J","G","D","E","F"],"FIT_MODEL_VERSION":"fit/0.1.0","FIT_PRIMARY_VARIANT":"SELL_EXIT","FIT_Q":0.1,"FIT_SEL_END":"2019-12-31","FIT_SEL_MIN_ACTIVE":6,"FIT_SEL_MIN_MONTHS":36,"FIT_SEL_MIN_SWITCHES":2,"FIT_SEL_START":"2014-01-31"}
 ```
-fit params hash = `4d0a9e579c7d41a703ba4f2b0fdfd08f4883cb8315cb9b82e4c172313cd4b926`. QA pins it. Any change to
+fit params hash = `4d0a9e579c7d41a703ba4f2b0fdfd08f4883cb8315cb9b82e4c172313cd4b926`. QA pins it.
+*Clarification (PM, 2026-11-13):* `fit_params_hash` in §11 is a function `fit_params_hash() -> str` returning this
+hex string. Any change to
 a constant is a new `FIT_MODEL_VERSION`.
 
 **Fixed before any result.** Every threshold above was set in this spec before any per-company number was computed.
@@ -98,6 +100,8 @@ valuation value            → screen_signals.csv gains <m>_fit, <m>_highlight, 
   - score where the label ∈ {BUY, HOLD, SELL}: J `−j_pct`, G `g_z`, D `d_mos`, E `e_f_score`, F `−f_acc_pct`.
 
   `--extra-models` with `--holdout` is **refused** (exit 2): the unfrozen models are never computed on holdout dates.
+  *Clarification (PM):* the `--extra-models` rows go to `bt_metrics` and `bt_signals` like every other report model;
+  `report --holdout` stays refused by the existing CLI as before.
 - **QA reproduction check:**
   - Starting from a DB that holds the pre-change stored rows plus the new columns and h = 1 rows, the default `report`
     gives `bt_metrics`, `bt_diagnostics` and `bt_signals` row-identical (except `run_id`) to the report without the
@@ -435,7 +439,8 @@ Values: CONFIRMED, NOT_CONFIRMED, INSUFFICIENT, NOT_TESTED.
 Meaning for the reader: **a model's signal is shown as relevant only where that model is CONFIRMED for the company**.
 All other labels remain visible but carry no per-company support.
 
-**Header lines** added to the CSV comment block and the Parquet metadata key `fit`:
+**Header lines** added to the CSV comment block and the Parquet metadata key `fit` (*clarification (PM):*
+`attach_fit` returns them with the leading `# `, i.e. in CSV comment form):
 - `# fit: company_model_fit run <run_id> (fit/0.1.0, params <first 16 hex>); CONFIRMED = worked in both in-sample windows (2014-2019, 2020-2023), not a forecast; survivor-biased`;
 - or, when there is no CSV, `# fit: no company_model_fit results; all <m>_fit = NOT_TESTED`.
 
@@ -478,10 +483,14 @@ from valuation.report.screen import attach_fit   # (df, fit: DataFrame | None, l
 ```
 - `strategy_returns` input: one pair's rows for one window (`date, label, ret`, any order). Output sorted by date with
   columns `date, label, ret, pos, switch, cost, r_strat, r_hold, excess`. The gap rule and the initial position
-  follow §4.2/§4.5.
-- `fit_table` input `frame`: long `ticker, date, label_A … label_F` (or long `ticker, model, date, label`), `ret, t1`.
+  follow §4.2/§4.5. *Clarification (PM):* `cost` = `FIT_COST · switch_t`, the cost charged in that month.
+- `fit_table` input `frame`: wide `ticker, date, label_A … label_F` (or long `ticker, model, date, label`), `ret, t1`.
   Output: §8.1 columns minus `run_id, fit_version, fit_params_hash, market`. Deterministic: same input → same output.
   Row permutation does not matter.
+  *Clarification (PM):* the wide label columns are named `label_<M>` (the pure-function interface); `run_fit` maps the
+  stored loader columns (`LABEL_COLUMNS`: `a_signal` … `f_signal`) to `label_<M>`. `fit_table` emits rows for every
+  model in `FIT_MODELS` that has a label column (wide) or rows (long) in the frame; a model absent from the frame gets
+  no rows. The "18 rows per ticker" of §8.1 applies to the full nine-model frame that `run_fit` passes.
 - Frames carry `datetime.date` dates.
 
 ## 12. Golden examples (QA; tolerance 1e-9 absolute unless stated exact)
@@ -532,7 +541,7 @@ Labels (NS = NO_SIGNAL, NE = NOT_ELIGIBLE, ∅ = NULL):
 | 2015-07-31 | HOLD | .01 | 1 | 0 | .01 | 0 |
 | 2015-08-31 | SELL | −.07 | 0 | 1 | −.001 | .069 |
 
-n_months 8, n_active 4, n_switches 5, ann_excess **0.3825** (= 12 · 0.254/8), t **2.534568010738418**,
+n_months 8, n_active 4, n_switches 5, ann_excess **0.3825** (= 12 · 0.255/8), t **2.534568010738418**,
 p **0.019485995463755224** (df 7).
 
 **G1b gap rule, CCC·E SELL_EXIT selection.** d4 has ret NaN, so the series is d1, d2, d3, d5, d6, d7, d8 (T = 7).
@@ -726,3 +735,7 @@ of d = 2015-01-31, 02-28, 03-31 (t0(2015-01-31) = 2015-02-02):
 
 ## Changelog
 - **0.1.0** (2026-11-13): initial version. Golden values verified with a throwaway numpy/scipy script.
+  Clarifications (PM resolutions of QA SPEC-QUESTIONs, no number or threshold changed, no version bump):
+  `fit_params_hash()` is a function; `strategy_returns.cost` = `FIT_COST · switch`; G1a parenthetical typo 0.254 → 0.255;
+  `fit_table` rows only for models present in the frame; wide label columns `label_<M>`; `attach_fit` header lines carry
+  `# `; `--extra-models` rows go to `bt_metrics`/`bt_signals`.

@@ -1,0 +1,14 @@
+# Fires trade2-nightly.service at 19:30 Toronto time, Mon-Fri, whatever the machine's time zone
+# (an explicit zone in OnCalendar needs systemd >= 235; DST is handled by the zone).
+# Persistent=true runs a missed fire (machine off or asleep) once at the next boot/resume.
+# Docs: docs/ops/nightly_update.md
+[Unit]
+Description=trade2 nightly market-data update timer
+
+[Timer]
+OnCalendar=Mon..Fri 19:30 America/Toronto
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

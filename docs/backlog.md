@@ -9,6 +9,7 @@ Status: `todo` · `doing` · `done` · `blocked`
 | P0-2 | GitHub Actions CI (lint + offline tests) | SW | Workflow runs on push/PR | done |
 | P0-3 | DuckDB schema + `valuation init` | SW | Creates all tables; re-running is a no-op | done |
 | P0-4 | Environment allow-list for data hosts | PM | Yahoo, EDGAR, BoC return 200 from the session | done |
+| P0-5 | Ops: nightly local market-data update (bash + PowerShell scripts; cron/systemd/launchd/Task Scheduler templates) | SW | Lock, retry, logs, ingest + value only (no backtest); offline tests; [`docs/ops/nightly_update.md`](ops/nightly_update.md) | done |
 
 ## Phase 1: Ingestion
 | ID | Task | Owner | Acceptance | Status |

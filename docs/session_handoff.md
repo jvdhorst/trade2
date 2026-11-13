@@ -35,8 +35,9 @@ None. No cloud sessions running, no open PRs, no scheduled checks.
 ## 5. Decisions waiting on the user
 1. **Holdout run** for H's pre-registered test: when?
 2. **Local runs** of the backtest + `backtest fit` (sequence in §7), then review `company_model_fit.csv`.
-   - Known pre-existing issue (found in #17): whole-market in-sample 12m returns for the last in-sample months (mid-2023) realise inside the holdout calendar. Proposed small fix before H's holdout test is interpreted; not done.
-   - README has two "Nightly updates" sections; consolidation offered, not done.
+   - **In-sample exit lock** (fixed 2026-11-13, `docs/models/backtest.md` §2): in-sample forward returns whose exit is after
+     2023-10-31 are now NaN (stocks and benchmark). Earlier Phase 8/9 and R2 in-sample numbers included them; a local
+     re-run will differ slightly (12m metrics now cover 2014-01 … 2022-09).
 3. **Optional next work:**
    - H-BBY (buyback-only) as a forward test on month-ends from 2026-11-30.
    - Data fixes before backtests: **DEF-9** (16-week fiscal quarters, e.g. PepsiCo, give no TTM; affects every model), **G-9** (EDGAR vs Yahoo debt definitions can flip G), CAT 10-Qs without debt tags, short TSX history (~5 quarters from Yahoo).

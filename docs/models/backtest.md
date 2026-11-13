@@ -61,7 +61,16 @@ month) with `m >= start` and `m < today` (strictly before), ascending. `holdout_
 118 (… 2023-10-31), holdout 36 (2023-11-30 … 2026-10-31).
 
 Every metric function takes `allowed_dates` (`None` = all dates in its input). The runner computes **in-sample only**
-by default. Holdout metrics are produced only with the CLI flag `--holdout`. Every run writes a row to `bt_runs` (§7)
+by default. Holdout metrics are produced only with the CLI flag `--holdout`.
+
+**In-sample exit lock (2026-11-13, harness fix; no model or threshold change).** An in-sample observation may use a
+forward return only if its exit session `t1` is on or before the last in-sample date (`in_end`, 2023-10-31 with today
+2026-11-10). `report.lock_in_sample(fwd, in_end)` sets `ret = NaN`, `flag = 'INCOMPLETE'` on every row with
+`date <= in_end` and (`t1` missing or `t1 > in_end`); rows dated after `in_end` (holdout) are unchanged. The same rule
+applies to the benchmark's forward returns. It applies to every US report, in-sample and `--holdout`, so the in-sample
+scope is identical in both. Consequence: the last ~h months of in-sample dates have no h-month return (12m IC/spread
+cover 2014-01 … 2022-09). Before this fix those returns realised inside the holdout calendar (found in the per-company
+fit review, #17); earlier in-sample reports (Phase 8/9, R2) include them and differ slightly from a re-run. Every run writes a row to `bt_runs` (§7)
 with `kind = 'in_sample'` or `'holdout'` and `thresholds_hash = sha256(json.dumps(obj, sort_keys=True,
 separators=(",", ":")).encode()).hexdigest()`, `obj = {"residual_income": {...}, "peer_regression": {...},
 "liquidity": <liquidity.yaml dict>}` where the two model dicts hold every constant listed in those specs' Constants

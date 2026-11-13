@@ -1024,3 +1024,20 @@ def test_part_with_old_stamp_is_rerun(fake_run, change):
     res = run_bt(fake_run)
     assert res["ran"] == 1
     assert len(SyncExecutor.submitted) == 1
+
+
+def test_report_applies_in_sample_exit_lock(base_db, tmp_path, monkeypatch):
+    """backtest.md §2 in-sample exit lock: the US report locks stock and benchmark returns at the
+    last in-sample date."""
+    seen = []
+    real = rep.lock_in_sample
+
+    def spy(fwd, in_end):
+        seen.append(in_end)
+        return real(fwd, in_end)
+
+    monkeypatch.setattr(rep, "lock_in_sample", spy)
+    p = copy_db(base_db, tmp_path, "lock.duckdb")
+    assert run_report(p, tmp_path / "out", monkeypatch) == 0
+    ins = bte.in_sample_dates(bte.rebalance_dates(bte.BT_START, date.fromisoformat(TODAY)))
+    assert seen and all(d == ins[-1] for d in seen)

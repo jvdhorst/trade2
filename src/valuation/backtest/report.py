@@ -141,10 +141,30 @@ def load_returns(con) -> pd.DataFrame:
     """Whole-market horizons only (per_company_fit.md §2.2): the h = 1 rows written for the
     per-company fit must never reach sector_excess, which takes horizons from the data."""
     hs = ", ".join(str(h) for h in m.HORIZONS)
-    r = con.execute("SELECT date, ticker, horizon, ret, flag FROM bt_returns "
+    r = con.execute("SELECT date, ticker, horizon, ret, flag, t1 FROM bt_returns "
                     f"WHERE horizon IN ({hs})").df()
     r["date"] = [_d(x) for x in r["date"]]
+    r["t1"] = [None if pd.isna(x) else _d(x) for x in r["t1"]]
     return r
+
+
+def lock_in_sample(fwd: pd.DataFrame, in_end: date) -> pd.DataFrame:
+    """backtest.md §2 in-sample exit lock: a row dated on or before `in_end` keeps its return
+    only if its exit session t1 is on or before `in_end`; otherwise ret NaN, flag INCOMPLETE.
+    Rows dated after `in_end` are unchanged. Returns a copy."""
+    out = fwd.copy()
+    if out.empty:
+        return out
+    t1 = out["t1"] if "t1" in out else pd.Series([None] * len(out), index=out.index)
+    late = [d <= in_end and (x is None or pd.isna(x) or _d(x) > in_end)
+            for d, x in zip(out["date"], t1, strict=True)]
+    mask = pd.Series(late, index=out.index)
+    out["ret"] = out["ret"].astype(float)
+    out.loc[mask, "ret"] = float("nan")
+    out["flag"] = pd.Series([m.INCOMPLETE if lk else f for lk, f in zip(late, out["flag"],
+                                                                         strict=True)],
+                            index=out.index, dtype=object)
+    return out
 
 
 # ---------- metrics per model ----------
@@ -532,7 +552,7 @@ def benchmark_fwd(con, key: str, dates: list[date]) -> pd.DataFrame:
         return pd.DataFrame(columns=["date", "horizon", "ret"])
     px["date"] = [_d(x) for x in px["date"]]
     fr = m.forward_returns(px, dates)
-    return fr[["date", "horizon", "ret"]]
+    return fr[["date", "horizon", "ret", "t1"]]
 
 
 def benchmark_excess_tables(results: dict, bench: pd.DataFrame, dates: list[date],

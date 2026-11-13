@@ -182,6 +182,8 @@ def backtest_cmd(args) -> int:
         keep = set(ins)
         rows = rows[rows["date"].isin(keep)].reset_index(drop=True)
         fwd = fwd[fwd["date"].isin(keep)].reset_index(drop=True)
+    if args.universe == "US" and ins:  # backtest.md §2: in-sample exits never pass in_end
+        fwd = rep.lock_in_sample(fwd, ins[-1])
     have = sorted(set(rows["date"]))
     ins = [d for d in ins if d in set(have)]
     ho = [d for d in ho if d in set(have)] if ho else None
@@ -222,6 +224,8 @@ def backtest_cmd(args) -> int:
 
     bkey = primary_return_benchmark(args.universe)
     bench = rep.benchmark_fwd(con, bkey, dates)
+    if args.universe == "US" and ins and not bench.empty:
+        bench = rep.lock_in_sample(bench.assign(flag=None), ins[-1])
     bex = rep.benchmark_excess_tables(results, bench, ins)
     parts += ["## Excess return vs benchmark (in-sample)", "",
               rep.render_benchmark_excess(bex, bkey), ""]

@@ -20,6 +20,7 @@ from . import data as btd
 from . import engine as bte
 from . import membership as mem
 from . import metrics as m
+from .fit import FIT_HORIZON
 
 log = logging.getLogger(__name__)
 BT_DB = Path("data/backtest.duckdb")
@@ -260,12 +261,17 @@ def members_by_date(con, universe: str, dates: list[date],
     return out
 
 
+# per_company_fit.md §2.1.4: 1-month returns (per-company fit) stored once with the whole-market
+# horizons; the whole-market report reads only metrics.HORIZONS (report.load_returns).
+RETURN_HORIZONS = (FIT_HORIZON, *m.HORIZONS)  # (1, 3, 6, 12)
+
+
 def compute_returns(con, dates: list[date]) -> int:
     con.execute("DROP TABLE IF EXISTS bt_returns")
     con.execute(RETURNS_DDL)
     prices = con.execute("SELECT ticker, date, adj_close FROM prices_daily").df()
     prices["date"] = [d.date() if hasattr(d, "date") else d for d in prices["date"]]
-    fr = m.forward_returns(prices, dates)
+    fr = m.forward_returns(prices, dates, horizons=RETURN_HORIZONS)
     con.execute("DELETE FROM bt_returns")
     con.register("_fr", fr)
     con.execute("INSERT INTO bt_returns SELECT date, ticker, horizon, t0, t1, ret, flag FROM _fr")

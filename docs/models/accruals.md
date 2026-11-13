@@ -272,6 +272,7 @@ all **HOLD** (pooled ranking would have pushed every US name up). With only C01.
   sector median > 55% in ≥ 60% of years), in which case it would enter a vote as SELL-only. A backtest must note the
   IFRS 16 (2019) / ASC 842 CFO break: within one date and one market all names share the regime, but time series
   across 2019 are not comparable.
+- Per-company fit ([`per_company_fit.md`](per_company_fit.md) v0.1.0, user decision 2026-11-13): F's label is now stored in the **in-sample** backtest (`bt_rows.f_signal`, labelled unvalidated) and evaluated per company (SELL_EXIT and BUY_ONLY); never on holdout dates. Label → position mapping in that spec §3.3. No parameter changes.
 - External checks (QA, `docs/qa/models_def_validation.md`): for 2–3 US names, NI TTM and CFO TTM vs the sum of the
   last four quarters of the 10-K/10-Q cash-flow statements (exact), TA_t and TA_{t−4q} vs the two balance sheets
   (exact), `NI − CFO` and the ratio recomputed to 1e-9; CFO TTM vs Yahoo `operatingCashflow` (±5%) as a sanity bound.

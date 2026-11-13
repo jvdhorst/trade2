@@ -166,6 +166,7 @@ Known gaps: unclassified balance sheets (no `AssetsCurrent`/`LiabilitiesCurrent`
   recorded for a later pre-registration only: the distress bucket (maybe 2–5% of eligible names) lags its sector median
   by > 3%/yr with hit rate > 55%; names it would veto from `SCREEN_BUY` have lower forward returns than un-vetoed BUYs;
   pass bar: the veto improves the combined BUY bucket's 12-month return in ≥ 60% of years (IC reported only).
+- Per-company fit ([`per_company_fit.md`](per_company_fit.md) v0.1.0, user decision 2026-11-13): G's label is now stored in the **in-sample** backtest (`bt_rows.g_signal`, labelled unvalidated) and evaluated per company (SELL_EXIT; BUY_ONLY not tested, G has no BUY); never on holdout dates. Label → position mapping in that spec §3.3. No parameter changes.
 - External checks (QA, `docs/qa/model_g_validation.md`): each X_i's numerator and denominator vs the 10-K/10-Q balance
   sheet (and income statement for EBIT) for 2–3 US names, exact; Z'' independently recomputed to 1e-9. Yahoo has no
   Z-score, so there is no external Z'' to compare.

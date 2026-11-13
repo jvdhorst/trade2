@@ -298,6 +298,7 @@ acquisition between t−4q and t makes every Δ signal compare unlike asset base
   this large-cap, liquid universe the original 23%/yr high-minus-low spread will not appear; expect 2–5%/yr for F ≥ 8
   minus F ≤ 2 with a small positive IC (0.02–0.04); specific check: the spread is larger within the cheapest half of
   each sector (by B/P) than in the dearest half, as in the paper.
+- Per-company fit ([`per_company_fit.md`](per_company_fit.md) v0.1.0, user decision 2026-11-13): E's label is now stored in the **in-sample** backtest (`bt_rows.e_signal`, labelled unvalidated) and evaluated per company (SELL_EXIT and BUY_ONLY); never on holdout dates. Label → position mapping in that spec §3.3. No parameter changes.
 - External checks (QA, `docs/qa/models_def_validation.md`): for 2–3 US names, each input (NI, CFO, GP, revenue TTM and
   prior TTM; TA at t, t−4q, t−8q; debt, CA, CL, shares at t and t−4q) vs the 10-K/10-Q, exact; ROA, gross margin and
   current ratio vs the issuer's ratios (±1% relative); the nine signals recomputed independently. Secondary: Yahoo

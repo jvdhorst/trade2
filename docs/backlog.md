@@ -94,7 +94,7 @@ Plan: [`docs/pm_plan_buy_hold_sell.md`](pm_plan_buy_hold_sell.md) · Proposal: [
 ## Revision round v2 (frozen protocol: [`docs/models/revision_v2_freeze.md`](models/revision_v2_freeze.md), params SHA-256 `6c6354c5…088e`)
 | ID | Task | Owner | Acceptance | Status |
 |---|---|---|---|---|
-| R2-0 | Specs: `residual_income` 0.2.0, `peer_regression` 0.2.0, `composite` 0.2.0, `eligibility` 0.1.1, `shareholder_yield` 0.1.0, freeze doc | AN | PR reviewed by PM/QA | done (this PR) |
+| R2-0 | Specs: `residual_income` 0.2.0, `peer_regression` 0.2.0, `composite` 0.2.0, `eligibility` 0.1.1, `shareholder_yield` 0.1.0, freeze doc | AN | PR reviewed by PM/QA | done |
 | R2-1 | QA spec tests before code: A G8 + changed G3/G5; B G5 + EV-sub-industry property; C G2-v2, G4, market separation; H G1–G10 + properties; eligibility 274; `FROZEN_V2` canonical SHA-256 = frozen value | QA | Tests written from specs, red before R2-2 | done: 7 new spec files (300 tests) + v0.2 updates of existing tests; 1325 green |
 | R2-2 | SW: `ni_quarters` + one-off rule + `screen_signal` (A); `sub_industry` (B); `market`, bp gating, per-market stats (C); `models/shareholder_yield.py` + engine mapping (same-source shares, split factor); `liquidity.yaml` 274; report columns (`a_model_signal`, `h_*`, B diagnostic disclaimer) | SW | R2-1 green, ruff clean | done (claude/r2-implementation) |
 | R2-3 | SW: harness additions (freeze §3): model H + H_BBY/H_DY diagnostics, A backtest label = model label, holdout guard, thresholds hash incl. H | SW/QA | Guard tested (second holdout run refused) | done: `backtest run --holdout --freeze …` one-shot guard (`backtest/holdout.py`), tested with fixtures only; holdout NOT run |
@@ -146,6 +146,16 @@ Specs: [`dividend_sustainability.md`](models/dividend_sustainability.md), [`piot
 | DEF-6 | E `ANNUAL_PRIOR`: store annual flow totals (Yahoo `annual*`, EDGAR FY durations) so TSX names (Yahoo ~5 quarters) can get a prior TTM; until then most TSX names are E `NO_SIGNAL / F_INCOMPLETE` | AN/SW | ttm.md + piotroski.md 0.2.0 | todo |
 | DEF-7 | D `g_hist` over 3 years (needs dividend history > 2 years, proposal §13); D yield-trap detection beyond realised cuts | AN/SW | Spec 0.2.0 | todo |
 | DEF-8 | F: IFRS 16 / ASC 842 CFO break (2019) must be noted in any F backtest; TSX sectors often < 12 names (`SMALL_SECTOR`) | AN/QA | Backtest pre-registration | todo |
+
+## Per-company model fit (spec [`docs/models/per_company_fit.md`](models/per_company_fit.md) v0.1.0; in-sample only, holdout locked)
+| ID | Task | Owner | Acceptance | Status |
+|---|---|---|---|---|
+| PCF-0 | Spec: per-company fit (SELL_EXIT primary, BUY_ONLY reported), windows 2014-01…2019-10 / 2020-01…2023-08, BH q 0.10, min effect 1%/yr, holdout guard, `company_model_fit`, screen `<m>_fit` / highlight | AN | PR reviewed by PM/QA | done |
+| PCF-1 | QA spec tests before code: goldens G1–G7, fit params hash, holdout guard + leak test, whole-market reproduction check, screen merge | QA | Written from the spec, red before PCF-2 | done (4 test files + `fit_db_fixture.py`, 206 red before PCF-2) |
+| PCF-2 | SW: `bt_rows` J/G/D/E/F columns, stamp + `bt_label_versions`, h = 1 returns, `report.load_returns` horizon filter, `--extra-models`; `backtest/fit.py`; `backtest fit` CLI; `value --fit` + `attach_fit` | SW | PCF-1 green, ruff clean; default `report` output unchanged | done (branch `claude/per-company-fit`; fixtures only, no real run) |
+| PCF-3 | QA: in-sample `backtest run` (re-runs all dates once) + `backtest fit`; label coverage per model (data batch 2–3 inputs in the backtest DB, rebuild if needed); `docs/qa/per_company_fit.md` | QA | Report with fit params hash; no threshold changed afterwards | todo (local run needed: README "Full local command sequence") |
+| PCF-4 | Later (diagnostic only): rolling windows; short-rate cash series; market-relative SELL_EXIT variant | AN | New spec version | backlog |
+| PCF-5 | Add J/G/D/E/F to the backtest: labels stored per date in `bt_rows` (`j_signal` … `f_acc_pct`), versions in the part stamp + `bt_label_versions`; whole-market rows only via `report --extra-models` (in-sample diagnostics, never a verdict, no pre-registered hypothesis); per-company fit covers all nine | SW | Default report unchanged | done in code (PCF-2); real-data label coverage to be checked in PCF-3. J-5 / G-6 / DEF-4 whole-market verdict backtests stay deferred |
 
 ## Decisions log
 - 2026-11-09: initial testing uses a ~2% subset of the universe (14 tickers, `universe/reference.csv`).

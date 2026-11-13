@@ -68,6 +68,41 @@ New H 0.1.0 shareholder yield (no new data). Then QA tests → SW → in-sample 
 models, verdict against the unchanged bar; a fail leaves the model "unvalidated" and the holdout spent. Phase 10 only if
 ≥ 2 of A, C, H pass (backlog R2-0 … R2-6).
 
+### Phase PCF: Per-company model fit (spec `docs/models/per_company_fit.md` v0.1.0, `fit/0.1.0`)
+**Goal.** Every model failed the whole-market bar (Phases 8–R2). The user's new view: assume each model is sound and
+find the companies where it works under backtesting. For each (company, model) pair, compare a strategy driven by the
+model's monthly label with holding the stock; a pair is CONFIRMED only if it passes a BH-corrected test in 2014–2019
+and keeps ≥ 1%/yr in 2020–2023. The screen then marks a model's signal as relevant only where it is CONFIRMED.
+
+**User decisions (2026-11-13).** Two modes on the same stored labels and returns (whole-market `backtest report`
+unchanged and reproduced exactly; per-company `backtest fit` new). Primary variant SELL_EXIT (an overlay on a holder);
+BUY_ONLY reported, never drives the screen. All nine models (A, B, C, H + unvalidated J, G, D, E, F) fitted; B never
+sets the row highlight. No per-company tuning of any model parameter; thresholds fixed in the spec before any result
+(fit params hash `4d0a9e57…b926`). US only.
+
+| ID | Task | Owner | Status |
+|---|---|---|---|
+| PCF-0 | Spec v0.1.0 | AN | done |
+| PCF-1 | QA spec tests before code (goldens G1–G7, hash, holdout guard + leak test, whole-market reproduction, screen merge) | QA | done |
+| PCF-2 | SW: J–F label columns + stamp + `bt_label_versions`, h = 1 returns, report horizon filter, `--extra-models`, `backtest/fit.py`, `backtest fit`, `value --fit` + `attach_fit` | SW | done (branch `claude/per-company-fit`; fixtures only) |
+| PCF-3 | QA local run: `backtest run` (re-runs every date once) + `backtest fit`; label coverage per model; `docs/qa/per_company_fit.md` | QA / user | todo (local run needed) |
+| PCF-4 | Later, diagnostic only: rolling windows, short-rate cash series, market-relative SELL_EXIT | AN | backlog |
+
+**The holdout stays out.** No signal date and no exit after 2023-10-31 (`FIT_LOCK_END`, fixed, independent of
+`--today`); `fit` never writes `bt_runs` and refuses `--holdout`; J–F are never computed on holdout dates
+(`--extra-models` refused with `--holdout`). The holdout remains reserved for H's pre-registered one-shot test.
+
+**Deliverables.** `company_model_fit` + `fit_runs` (backtest DB); `reports/backtest/company_model_fit.csv` and
+`company_model_fit_<run_id>.md`; `screen_signals` columns `<m>_fit`, `<m>_highlight`, `highlight`, `highlight_models`.
+
+**Open items.**
+- A local run is needed (the cloud container has neither network ingest nor the real backtest DB): `backtest run`,
+  `backtest report` (reproduction of `docs/qa/r2-insample.md` §1), `backtest fit`, then `value`.
+- J–F label coverage check: the summary marks `LOW_LABEL_COVERAGE` (< 50%); a backtest DB built before data batches
+  2–3 lacks EBIT, CFO, revenue, GP, current assets/liabilities and retained earnings, so J–F would be mostly
+  NO_SIGNAL (a `backtest build` rebuild may be needed).
+- No short-rate series: `rates_daily` has only 10-year yields, so cash earns 0 (biases SELL_EXIT against passing).
+
 ## Decisions (approved by the user with the PM defaults)
 1. **Approve new host `fred.stlouisfed.org`** for the US 10-year yield (alternative: treasury.gov).
 2. **Accept AN's parameters as the starting config** (ERP 5%, the thresholds above). They'll be revisited only after

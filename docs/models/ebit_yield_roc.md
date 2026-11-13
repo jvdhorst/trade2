@@ -186,6 +186,7 @@ filers (EBIT TTM None → `NO_DATA`); TSX Yahoo history is ~5 quarters.
 - Backtest: **deferred** (user decision). J is in no backtest run, holdout or in-sample. The proposal's hypothesis is
   recorded for a later pre-registration only: top-minus-bottom quintile 12-month spread 3–6%/yr, IC 0.04–0.06, and
   the check EY alone vs the joint rank (if ROC adds no IC, keep the simpler model).
+- Per-company fit ([`per_company_fit.md`](per_company_fit.md) v0.1.0, user decision 2026-11-13): J's label is now stored in the **in-sample** backtest (`bt_rows.j_signal`, labelled unvalidated) and evaluated per company (SELL_EXIT and BUY_ONLY); never on holdout dates. Label → position mapping in that spec §3.3. No parameter changes.
 - External checks (QA, `docs/qa/model_j_validation.md`): EV vs Yahoo `enterpriseValue` within ±10% (debt definitions
   differ); EBIT TTM vs 10-K/10-Q operating income, exact, for 2–3 US names; EY vs 1 / Yahoo `enterpriseToEbitda` only
   as a sanity bound (EBIT < EBITDA, so EY should be below it).

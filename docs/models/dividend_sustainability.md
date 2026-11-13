@@ -261,6 +261,7 @@ which the backtest undoes (`backtest/data.py`) and the engine re-applies through
   vs 12-month return 0.02–0.04; pass bar proposal §6 (spread > 0 in ≥ 60% of years, IC > 0.03, t > 2); specific check:
   the `payout > 1` SELL bucket should show a higher subsequent dividend-cut rate than the rest, else the coverage rule
   is not informative.
+- Per-company fit ([`per_company_fit.md`](per_company_fit.md) v0.1.0, user decision 2026-11-13): D's label is now stored in the **in-sample** backtest (`bt_rows.d_signal`, labelled unvalidated) and evaluated per company (SELL_EXIT and BUY_ONLY); never on holdout dates. Label → position mapping in that spec §3.3. No parameter changes.
 - External checks (QA, `docs/qa/models_def_validation.md`): for 2–3 US names, NI TTM and shares vs the 10-K/10-Q and
   DPS_TTM vs declared dividends per share (`CommonStockDividendsPerShareDeclared`, ±2%); `dy` vs Yahoo
   `trailingAnnualDividendYield` (±5%; Yahoo lags one payment); `payout` vs Yahoo `payoutRatio` (±10%).

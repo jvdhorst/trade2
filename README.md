@@ -59,14 +59,15 @@ eligibility filter). IFRS 17 life insurers need the after-tax CSM, a manual inpu
 [`universe/insurer_csm.csv`](universe/insurer_csm.csv) (`--csm`). A listed insurer with a blank value gets `NO_SIGNAL`
 / `NEEDS_CSM_INPUT` until a human fills it in. Full per-ticker inputs are in the DuckDB table `signals` (`payload_json`).
 
-### Backtest (Phase 8): `valuation backtest build|run|report`
+### Backtest (Phase 8): `valuation backtest build|run|report|fit`
 Spec [`docs/models/backtest.md`](docs/models/backtest.md). It has its own DuckDB, `data/backtest.duckdb`, so the live DB is never touched.
 ```bash
 uv run valuation backtest build                  # PIT S&P 500 membership (Wikipedia), daily prices 2012→ (as traded),
                                                  # splits, dividends, EDGAR history, 10y yields, USD/CAD
 uv run valuation backtest benchmarks             # benchmark series 2012→ for the excess-vs-benchmark column
-uv run valuation backtest run --workers 4        # in-sample month-ends 2014→ (holdout dates untouched): Models A, B, C, H per date (resumable)
+uv run valuation backtest run --workers 4        # in-sample month-ends 2014→ (holdout dates untouched): labels A, B, C, H (+ unvalidated J, G, D, E, F) per date, fwd returns 1/3/6/12m (resumable)
 uv run valuation backtest report                 # in-sample metrics + diagnostics → reports/backtest/*.md
+uv run valuation backtest fit                    # per-company model fit (see below)
 # ONE-SHOT holdout (revision round v2): refused if the code's parameter SHA-256 differs from the freeze doc,
 # or docs/qa/holdout_v2.md / a holdout bt_runs row already exists. Runs all dates and reports in one go.
 uv run valuation backtest run --holdout --freeze docs/models/revision_v2_freeze.md --today 2026-11-10
@@ -92,6 +93,48 @@ How it works:
     uv run valuation value                                          # writes reports/<date>/screen_signals.{csv,parquet} incl. d_*/e_*/f_*
     ```
 - Model C is reported with its four factors as diagnostics (C_V, C_Q, C_M, C_R: each factor's own spread and IC), and every model's BUY / SELL / ALL buckets get an **excess return vs the market benchmark** (`SPX_TR` for US, `XIC` for TSX), alongside the pass bar.
+
+### Per-company model fit: `valuation backtest fit`
+Spec [`docs/models/per_company_fit.md`](docs/models/per_company_fit.md) (`fit/0.1.0`). The backtest has **two modes**
+that read the same stored labels and returns, written once by `backtest run`:
+1. **Whole-market** (`backtest report`): the pooled pass bar of `backtest.md`, unchanged (it reads only the 3/6/12-month
+   returns). `--extra-models` adds diagnostic rows for the unvalidated J, G, D, E, F (never a verdict; refused with
+   `--holdout`).
+2. **Per-company** (`backtest fit`): for every (S&P 500 company, model) pair, a strategy that steps out of the stock on
+   the model's SELL (`SELL_EXIT`, primary; `BUY_ONLY` reported) is compared with holding it, on 1-month returns, 10 bp
+   per switch, cash 0. **Select** in 2014-01…2019-10 (one-sided t-test, Benjamini–Hochberg q ≤ 0.10 over all pairs),
+   **confirm** in 2020-01…2023-08 (excess ≥ 1%/yr). Nothing after 2023-10-31 is read (holdout locked; `fit` refuses
+   `--holdout`, `--market TSX` and a `--today` before 2026-11-01). Thresholds are fixed in the spec (fit params hash
+   `4d0a9e57…b926`), never tuned.
+
+Output: DuckDB `company_model_fit` + `fit_runs` (backtest DB), `reports/backtest/company_model_fit.csv` (latest run;
+copy `company_model_fit_<run_id>.csv`) and a summary `company_model_fit_<run_id>.md` (status counts, CONFIRMED pairs,
+label coverage per model). `valuation value` reads that CSV (`--fit PATH`, default
+`reports/backtest/company_model_fit.csv`) and appends to `screen_signals` the columns `<m>_fit` (the company's
+SELL_EXIT status: CONFIRMED / NOT_CONFIRMED / INSUFFICIENT / NOT_TESTED), `<m>_highlight` (CONFIRMED and a current
+BUY/HOLD/SELL; A uses `a_model_signal`), `highlight` (any of A, C, H, J, G, D, E, F; B is diagnostic) and
+`highlight_models`. Without the CSV, or for a stale model version or a non-US row, every `<m>_fit` is NOT_TESTED.
+*CONFIRMED means "worked in both in-sample windows", not a forecast; survivor-biased; all models stay unvalidated.*
+
+**Full local command sequence** (run on your own machine: it needs the network and the real DBs; the cloud
+container never runs these, it only runs the offline fixture tests):
+```bash
+uv sync
+uv run valuation init
+uv run valuation ingest --universe universe/sp500.csv           # live DB (also universe/tsx_composite.csv);
+                                                                # --refresh-fundamentals once on an old DB
+uv run valuation backtest build                                 # backtest DB data/backtest.duckdb (network; rebuild
+                                                                # if it predates data batches 2-3, else J-F are NO_SIGNAL)
+uv run valuation backtest benchmarks                            # optional: excess-vs-benchmark column
+uv run valuation backtest run --market US --workers 4           # labels A,B,C,H + J,G,D,E,F and 1/3/6/12m returns,
+                                                                # in-sample only; first run after this change
+                                                                # re-runs every date once (stamp change), resumable
+uv run valuation backtest report --market US                    # whole-market report (unchanged); add
+                                                                # --extra-models for J-F diagnostics
+uv run valuation backtest fit --market US                       # per-company fit -> company_model_fit
+                                                                # + reports/backtest/company_model_fit.csv
+uv run valuation value --fit reports/backtest/company_model_fit.csv   # screen_signals with <m>_fit / highlight
+```
 
 Results: [`docs/qa/phase8-validation.md`](docs/qa/phase8-validation.md) (A, B), [`docs/qa/phase9-validation.md`](docs/qa/phase9-validation.md) (data batch 2, C, benchmarks).
 

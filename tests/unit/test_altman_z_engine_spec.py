@@ -183,12 +183,13 @@ def assert_g1(r, z=Z_G1):
     assert truth(r["g_distress_veto"]) is False
 
 
-def test_g_columns_after_j_before_flags(con, csm):
+def test_g_columns_after_j_before_d(con, csm):
     df, _ = run(con, csm)
     cols = list(df.columns)
     i = cols.index("g_signal")
     assert cols[i:i + 10] == G_COLUMNS
-    assert cols[i + 10] == "flags" and cols[-1] == "flags"
+    # Models D, E, F (0.1.0) now follow the g_* block; flags stays last.
+    assert cols[i + 10] == "d_signal" and cols[-1] == "flags"
     j = cols.index("j_signal")
     assert cols[j:j + 8] == J_COLUMNS and j + 8 == i
     assert not any(c.startswith("g_") and "vote" in c for c in cols)

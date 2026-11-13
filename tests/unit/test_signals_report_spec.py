@@ -46,6 +46,12 @@ COLUMNS = [
     # Model G columns (altman_z.md 0.1.0 §Report): after j_*, before flags
     "g_signal", "g_no_signal_reason", "g_z", "g_zone", "g_x1", "g_x2", "g_x3", "g_x4",
     "g_cfo_to_debt", "g_distress_veto",
+    # Models D, E, F (dividend_sustainability.md, piotroski.md, accruals.md 0.1.0 §Report):
+    # after g_*, in the order D, E, F, before flags
+    "d_signal", "d_no_signal_reason", "d_payout", "d_g_sust", "d_g_hist", "d_dy", "d_k",
+    "d_spread", "d_v_ddm", "d_mos",
+    "e_signal", "e_no_signal_reason", "e_f_score", "e_n_scored", "e_signals",
+    "f_signal", "f_no_signal_reason", "f_accrual_ratio", "f_acc_pct", "f_cash_conv", "f_n",
     "flags",
 ]
 
@@ -310,7 +316,9 @@ def test_us_bank_g3_base(con, csm):
     # Financials has < 12 fit names in this DB -> Model B has no fit.
     assert (r["b_signal"], r["b_no_signal_reason"]) == ("NO_SIGNAL", "NO_FIT")
     assert blank(r["b_fitted_pb"]) and blank(r["b_resid_pct"])
-    assert flagset(r["flags"]) == {"SELL_ZONE"}  # v0.2.0: SELL_ZONE on the model SELL
+    # v0.2.0: SELL_ZONE on the model SELL. Model D (Financials included) adds NO_DIV_HISTORY:
+    # this DB's price history does not cover the prior-year dividend window.
+    assert flagset(r["flags"]) == {"SELL_ZONE", "NO_DIV_HISTORY"}
 
 
 def test_ineligible_name_keeps_numbers(con, csm):

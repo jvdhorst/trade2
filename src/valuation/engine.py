@@ -6,7 +6,7 @@ import json
 import subprocess
 import uuid
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import duckdb
 import pandas as pd
@@ -349,6 +349,10 @@ SIGNAL_COLUMNS = [
     "j_signal", "j_no_signal_reason", "j_ey", "j_roc", "j_ev", "j_rank_ey", "j_rank_roc", "j_pct",
     "g_signal", "g_no_signal_reason", "g_z", "g_zone", "g_x1", "g_x2", "g_x3", "g_x4",
     "g_cfo_to_debt", "g_distress_veto",
+    "d_signal", "d_no_signal_reason", "d_payout", "d_g_sust", "d_g_hist", "d_dy", "d_k",
+    "d_spread", "d_v_ddm", "d_mos",
+    "e_signal", "e_no_signal_reason", "e_f_score", "e_n_scored", "e_signals",
+    "f_signal", "f_no_signal_reason", "f_accrual_ratio", "f_acc_pct", "f_cash_conv", "f_n",
     "flags",
 ]
 C_COLUMNS = ("c_signal", "c_no_signal_reason", "c_score", "c_pct", "c_n_factors", "c_value",
@@ -358,6 +362,11 @@ J_COLUMNS = ("j_signal", "j_no_signal_reason", "j_ey", "j_roc", "j_ev", "j_rank_
              "j_pct")
 G_COLUMNS = ("g_signal", "g_no_signal_reason", "g_z", "g_zone", "g_x1", "g_x2", "g_x3", "g_x4",
              "g_cfo_to_debt", "g_distress_veto")
+D_COLUMNS = ("d_signal", "d_no_signal_reason", "d_payout", "d_g_sust", "d_g_hist", "d_dy", "d_k",
+             "d_spread", "d_v_ddm", "d_mos")
+E_COLUMNS = ("e_signal", "e_no_signal_reason", "e_f_score", "e_n_scored", "e_signals")
+F_COLUMNS = ("f_signal", "f_no_signal_reason", "f_accrual_ratio", "f_acc_pct", "f_cash_conv",
+             "f_n")
 LABELS = ("BUY", "HOLD", "SELL", "NO_SIGNAL", "NOT_ELIGIBLE")
 RF_SERIES = {"TSX": "CA10Y", "US": "US10Y"}
 
@@ -438,6 +447,47 @@ def shares_prev_filing(filings: list[bv.Filing], period_end_t: date,
     return max(c, key=lambda f: (f.period_end, f.filed_date)) if c else None
 
 
+def filing_in_window(filings: list[bv.Filing], period_end_t: date, as_of: date,
+                     window: tuple[int, int]) -> bv.Filing | None:
+    """From ONE source's filings: the latest period_end in [period_end_t - hi, period_end_t - lo]
+    days (window = (lo, hi)), filed <= as_of; equal period_end -> later filed. None if none.
+    Models E and F (piotroski.md, accruals.md, Data mapping)."""
+    lo, hi = window
+    c = [f for f in filings if f.filed_date <= as_of
+         and lo <= (period_end_t - f.period_end).days <= hi]
+    return max(c, key=lambda f: (f.period_end, f.filed_date)) if c else None
+
+
+def flow_ttm_at(con, ticker: str, item: str, as_of: date, source: str,
+                end_window: tuple[date, date]):
+    """TTM of a flow item from ONE source's quarters, using only quarters with period_end <= the
+    latest known quarter end inside end_window (inclusive). Returns (TTMResult, unit of that
+    latest quarter) when the TTM's period_end lies in the window, else None. Model E's prior
+    TTM (piotroski.md, Data mapping)."""
+    rows = con.execute(
+        "SELECT period_end, filed_date, value, unit FROM fundamentals "
+        "WHERE ticker=? AND item=? AND source=? AND filed_date<=?",
+        [ticker, item, source, as_of]).fetchall()
+    qs = [_Q(pe, fd, v, u) for pe, fd, v, u in rows]
+    lo, hi = end_window
+    ends = [e for e in ttm_mod.latest_known(qs, as_of) if lo <= e <= hi]
+    if not ends:
+        return None
+    cut = max(ends)
+    res = ttm_mod.ttm([q for q in qs if q.period_end <= cut], as_of)
+    if res.value is None or res.period_end != cut:
+        return None
+    return res, ttm_mod.latest_known(qs, as_of)[cut].unit
+
+
+def ex_date_count(con, ticker: str, as_of: date) -> int:
+    """Distinct dividend ex-dates in (as_of - 365 days, as_of] (Model D, IRREGULAR_DIV)."""
+    row = con.execute(
+        "SELECT count(DISTINCT ex_date) FROM dividends WHERE ticker=? AND ex_date>? AND ex_date<=?",
+        [ticker, as_of - timedelta(days=365), as_of]).fetchone()
+    return int(row[0]) if row else 0
+
+
 def _ni_rows(con, ticker: str, as_of: date) -> dict[str, list]:
     rows = con.execute(
         "SELECT source, period_end, filed_date, value, unit, filed_estimated FROM fundamentals "
@@ -475,10 +525,13 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
                 liquidity: dict | None = None,
                 csm_path="universe/insurer_csm.csv") -> tuple[pd.DataFrame, dict]:
     """Model A + Model B for every security (or `tickers`), one report row each."""
+    from .models import accruals as fm
     from .models import altman_z as gm
     from .models import composite as cm
+    from .models import dividend_sustainability as dm
     from .models import ebit_yield_roc as jm
     from .models import peer_regression as pr
+    from .models import piotroski as pm
     from .models import residual_income as ri
     from .models import shareholder_yield as sy
 
@@ -497,6 +550,9 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
     h_inputs: dict[str, sy.SYInputs] = {}
     j_inputs: list[jm.JInputs] = []
     g_inputs: list[gm.GInputs] = []
+    d_inputs: list[dm.DInputs] = []
+    e_inputs: list[pm.EInputs] = []
+    f_inputs: list[fm.FInputs] = []
 
     def a_elig(e):
         return None if e is None else e.eligible
@@ -529,11 +585,12 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
         csm_relevant, csm = csm_for(csm_rows.get(t), inp.period_end, as_of)
         e = eligibility.get(t)
         dps = dps_ttm(con, t, as_of)
+        a_rf = risk_free(con, as_of, {"TSX": "CAD", "US": "USD"}[market])
         a = ri.evaluate(ri.RIInputs(
             ticker=t, as_of=as_of, price=inp.price,
             bvps=ce_bv / inp.shares_outstanding * inp.fx_rate, sector=inp.sector,
             eligible=None if e is None else e.eligible,
-            rf=risk_free(con, as_of, {"TSX": "CAD", "US": "USD"}[market]),
+            rf=a_rf,
             ni_common_ttm=res.value, common_equity_end=ce_end, common_equity_start=ce_start,
             shares_outstanding=inp.shares_outstanding, fx_rate=inp.fx_rate,
             dps_ttm=dps, market=market, ttm_flags=res.flags,
@@ -602,6 +659,33 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
                            "g_current_assets": meta.get(CURRENT_ASSETS),
                            "g_current_liabilities": meta.get(CURRENT_LIABILITIES),
                            "g_retained_earnings": meta.get(RETAINED_EARNINGS)})
+        # Model D (dividend_sustainability.md, Data mapping): DPS windows guarded by the first bar.
+        first_bar = con.execute("SELECT min(date) FROM prices_daily WHERE ticker=?",
+                                [t]).fetchone()[0]
+        prev_day = as_of - timedelta(days=dm.PREV_DAYS)
+        d_dps, d_dps_prev, n_ex = dps, None, ex_date_count(con, t, as_of)
+        if first_bar is None or first_bar > as_of - timedelta(
+                days=dm.PREV_DAYS - dm.COVERAGE_GRACE_DAYS):
+            d_dps, n_ex = None, 0
+        if first_bar is not None and first_bar <= as_of - timedelta(
+                days=2 * dm.PREV_DAYS - dm.COVERAGE_GRACE_DAYS):
+            d_dps_prev = dps_ttm(con, t, prev_day) / split_factor(con, t, prev_day, as_of)
+        d_inputs.append(dm.DInputs(
+            ticker=t, market=market, sector=inp.sector, eligible=a_elig(e), price=inp.price,
+            dps_ttm=d_dps, dps_ttm_prev=d_dps_prev, n_ex_dates=n_ex,
+            ni_common_ttm=None if (ni_ccy and rep_ccy and ni_ccy != rep_ccy) else res.value,
+            shares_outstanding=inp.shares_outstanding, fx_rate=inp.fx_rate, roe_raw=a.roe_raw,
+            rf=a_rf,
+            flags=frozenset(a.flags & {"PIT_ESTIMATED", "NO_TTM", "STALE_TTM",
+                                       "ROE_SPOT_EQUITY", "CSM_ADJUSTED"})))
+        details[t].update({"d_dps_ttm": d_dps, "d_dps_ttm_prev": d_dps_prev,
+                           "d_n_ex_dates": n_ex, "d_first_bar": first_bar.isoformat()
+                           if first_bar else None})
+        # Models E and F (piotroski.md, accruals.md, Data mapping).
+        e_inp, f_inp, ef_details = _ef_inputs(con, inp, meta, market, a_elig(e), a.flags, as_of)
+        e_inputs.append(e_inp)
+        f_inputs.append(f_inp)
+        details[t].update(ef_details)
 
     subs = dict(con.execute("SELECT ticker, gics_sub_industry FROM securities").fetchall())
     obs = [pr.PBObs(ticker=t, sector=a.sector, price=a.price, bvps=a.b0, roe=a.roe_raw,
@@ -623,12 +707,16 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
     rf_m = {m: risk_free(con, as_of, ccy) for m, ccy in (("TSX", "CAD"), ("US", "USD"))}
     j_results = {r.ticker: r for r in jm.run_ebit_yield_roc(j_inputs, rf_m)}
     g_results = {r.ticker: r for r in gm.run_altman_z(g_inputs)}
+    d_results = {r.ticker: r for r in dm.run_dividend_sustainability(d_inputs)}
+    e_results = {r.ticker: r for r in pm.run_piotroski(e_inputs)}
+    f_results = {r.ticker: r for r in fm.run_accruals(f_inputs)}
 
     run_id = uuid.uuid4().hex[:12]
     con.execute("INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?)", [
         run_id, datetime.now(), as_of, "signals", _git_sha(),
         json.dumps({"models": [ri.MODEL_VERSION, pr.MODEL_VERSION, cm.MODEL_VERSION,
-                               sy.MODEL_VERSION, jm.MODEL_VERSION, gm.MODEL_VERSION],
+                               sy.MODEL_VERSION, jm.MODEL_VERSION, gm.MODEL_VERSION,
+                               dm.MODEL_VERSION, pm.MODEL_VERSION, fm.MODEL_VERSION],
                     "composite_stats": {"bounds": {"|".join(k): v
                                                    for k, v in c_stats.bounds.items()},
                                         "sectors": {"|".join(k): v.__dict__
@@ -701,6 +789,31 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
             label = "NO_SIGNAL" if eligible is True else "NOT_ELIGIBLE"
             rec.update({"g_signal": label,
                         "g_no_signal_reason": "NO_DATA" if label == "NO_SIGNAL" else None})
+        d, ee, f = d_results.get(t), e_results.get(t), f_results.get(t)
+        label = "NO_SIGNAL" if eligible is True else "NOT_ELIGIBLE"
+        missing = "NO_DATA" if label == "NO_SIGNAL" else None
+        if d is not None:
+            flags |= set(d.flags)
+            rec.update({"d_signal": d.signal, "d_no_signal_reason": d.no_signal_reason,
+                        "d_payout": d.payout, "d_g_sust": d.g_sust, "d_g_hist": d.g_hist,
+                        "d_dy": d.dy, "d_k": d.k, "d_spread": d.spread, "d_v_ddm": d.v_ddm,
+                        "d_mos": d.mos})
+        else:
+            rec.update({"d_signal": label, "d_no_signal_reason": missing})
+        if ee is not None:
+            flags |= set(ee.flags)
+            rec.update({"e_signal": ee.signal, "e_no_signal_reason": ee.no_signal_reason,
+                        "e_f_score": ee.f_score, "e_n_scored": ee.n_scored,
+                        "e_signals": pm.signals_str(ee.signals)})
+        else:
+            rec.update({"e_signal": label, "e_no_signal_reason": missing})
+        if f is not None:
+            flags |= set(f.flags)
+            rec.update({"f_signal": f.signal, "f_no_signal_reason": f.no_signal_reason,
+                        "f_accrual_ratio": f.accrual_ratio, "f_acc_pct": f.acc_pct,
+                        "f_cash_conv": f.cash_conv, "f_n": f.n})
+        else:
+            rec.update({"f_signal": label, "f_no_signal_reason": missing})
         rec["flags"] = ",".join(sorted(flags))
         records.append(rec)
         payload = {**rec, **details.get(t, {})}
@@ -722,15 +835,27 @@ def run_signals(con: duckdb.DuckDBPyConnection, as_of: date, tickers: set[str] |
                             "j_n": j.n})
         if g is not None:
             payload["g_total_liabilities"] = g.total_liabilities
+        if d is not None:
+            payload.update({"d_eps": d.eps, "d_roe0": d.roe0, "d_g_raw": d.g_raw, "d_r": d.r})
+        if ee is not None:
+            payload.update({"e_roa": ee.roa, "e_roa_prior": ee.roa_prior, "e_lev_t": ee.lev_t,
+                            "e_lev_prior": ee.lev_prior, "e_cr_t": ee.cr_t,
+                            "e_cr_prior": ee.cr_prior, "e_shares_prev_adj": ee.shares_prev_adj,
+                            "e_gm_t": ee.gm_t, "e_gm_prior": ee.gm_prior, "e_ato_t": ee.ato_t,
+                            "e_ato_prior": ee.ato_prior})
+        if f is not None:
+            payload.update({"f_accruals": f.accruals, "f_avg_total_assets": f.avg_total_assets})
         con.execute("INSERT INTO signals VALUES (?,?,?,?,?,?,?)",
                     [run_id, t, as_of,
                      f"{ri.MODEL_VERSION},{pr.MODEL_VERSION},{cm.MODEL_VERSION},{sy.MODEL_VERSION},"
-                     f"{jm.MODEL_VERSION},{gm.MODEL_VERSION}",
+                     f"{jm.MODEL_VERSION},{gm.MODEL_VERSION},{dm.MODEL_VERSION},"
+                     f"{pm.MODEL_VERSION},{fm.MODEL_VERSION}",
                      rec["a_signal"], rec["b_signal"], json.dumps(payload, default=str)])
     df = pd.DataFrame.from_records(records, columns=SIGNAL_COLUMNS)
     counts: dict[str, dict[str, dict[str, int]]] = {}
     for model, col in (("A", "a_signal"), ("B", "b_signal"), ("C", "c_signal"),
-                       ("H", "h_signal"), ("J", "j_signal"), ("G", "g_signal")):
+                       ("H", "h_signal"), ("J", "j_signal"), ("G", "g_signal"),
+                       ("D", "d_signal"), ("E", "e_signal"), ("F", "f_signal")):
         counts[model] = {}
         for m in ("TSX", "US"):
             sub = df[df["market"] == m]
@@ -750,6 +875,100 @@ def _flow(con, ticker: str, item: str, as_of: date, rep_ccy: str | None, flags: 
         flags.add("FLOW_CCY_MISMATCH")
         return None, None
     return res.value, res.period_end
+
+
+def _ef_inputs(con, inp, meta, market: str, eligible, a_flags, as_of: date):
+    """Models E and F inputs (piotroski.md, accruals.md, Data mapping): balance sheet t = the
+    filing behind bvps; prior filings from the SAME source by period_end window; flows via
+    flow_ttm, used only when their period_end == t (E) / checked by the model (F)."""
+    from .models import accruals as fm
+    from .models import piotroski as pm
+    from .providers.base import GROSS_PROFIT_Q, REVENUE_Q
+
+    t, src, bs_ccy = inp.ticker, meta["source"], inp.reporting_currency
+    t_bs = inp.period_end
+    conv = meta.get("share_conversion") or 1.0
+    filings = [f for f in _filings(con, t, src, need_shares=False) if f.filed_date <= as_of]
+    e_flags = set(a_flags) & {"PIT_ESTIMATED"}
+
+    def prior_bs(window, flags, flag):
+        f = filing_in_window(filings, t_bs, as_of, window)
+        if f is None:
+            return None, {}
+        d = dict(f.data)
+        if (d.get("_currency") or bs_ccy) != bs_ccy:
+            flags.add(flag)
+            d = {SHARES: d.get(SHARES)}
+        return f, d
+
+    f4, d4 = prior_bs(pm.PRIOR_WINDOW_DAYS, e_flags, pm.PRIOR_CCY_MISMATCH)
+    _f8, d8 = prior_bs(pm.PRIOR2_WINDOW_DAYS, e_flags, pm.PRIOR_CCY_MISMATCH)
+    lo, hi = pm.PRIOR_WINDOW_DAYS
+    prior_win = (t_bs - timedelta(days=hi), t_bs - timedelta(days=lo))
+
+    def flows(item):
+        res, fsrc, ccy = flow_ttm(con, t, item, as_of)
+        if res.value is None:
+            return None, None
+        if res.period_end != t_bs:
+            e_flags.add(pm.E_PERIOD_MISMATCH)
+            return None, None
+        if ccy and bs_ccy and ccy != bs_ccy:
+            e_flags.add("FLOW_CCY_MISMATCH")
+            return None, None
+        prior = None
+        if item != CFO_Q:
+            got = flow_ttm_at(con, t, item, as_of, fsrc, prior_win)
+            if got is not None:
+                pres, unit = got
+                if unit and bs_ccy and unit != bs_ccy:
+                    e_flags.add("FLOW_CCY_MISMATCH")
+                else:
+                    prior = pres.value
+        return res.value, prior
+
+    ni, ni_p = flows(NI_COMMON_Q)
+    cfo, _ = flows(CFO_Q)
+    gp, gp_p = flows(GROSS_PROFIT_Q)
+    rev, rev_p = flows(REVENUE_Q)
+    sh_t = meta.get(SHARES)
+    sh_4q = d4.get(SHARES)
+    e_inp = pm.EInputs(
+        ticker=t, market=market, sector=inp.sector, eligible=eligible,
+        ni_ttm=ni, ni_ttm_prior=ni_p, cfo_ttm=cfo, gp_ttm=gp, gp_ttm_prior=gp_p,
+        rev_ttm=rev, rev_ttm_prior=rev_p, ta_t=meta.get(TOTAL_ASSETS),
+        ta_4q=d4.get(TOTAL_ASSETS), ta_8q=d8.get(TOTAL_ASSETS), debt_t=meta.get(TOTAL_DEBT),
+        debt_4q=d4.get(TOTAL_DEBT), ca_t=meta.get(CURRENT_ASSETS),
+        cl_t=meta.get(CURRENT_LIABILITIES), ca_4q=d4.get(CURRENT_ASSETS),
+        cl_4q=d4.get(CURRENT_LIABILITIES), shares_t=sh_t * conv if sh_t else None,
+        shares_4q=sh_4q * conv if sh_4q else None,
+        split_factor=split_factor(con, t, f4.period_end, t_bs) if f4 is not None else 1.0,
+        flags=frozenset(e_flags))
+
+    # Model F: TA_{t-4q} from the same-source filing that carries total assets.
+    f_flags = set(a_flags) & {"PIT_ESTIMATED", "NO_TTM", "STALE_TTM"}
+    fp = filing_in_window([f for f in filings if f.data.get(TOTAL_ASSETS) is not None], t_bs,
+                          as_of, fm.PREV_WINDOW_DAYS)
+    ta_prev = None
+    if fp is not None:
+        if (fp.data.get("_currency") or bs_ccy) != bs_ccy:
+            f_flags.add(fm.F_PRIOR_CCY_MISMATCH)
+        else:
+            ta_prev = fp.data[TOTAL_ASSETS]
+    ni_f, ni_pe = _flow(con, t, NI_COMMON_Q, as_of, bs_ccy, f_flags)
+    cfo_f, cfo_pe = _flow(con, t, CFO_Q, as_of, bs_ccy, f_flags)
+    f_inp = fm.FInputs(
+        ticker=t, market=market, sector=inp.sector, eligible=eligible, ni_ttm=ni_f,
+        cfo_ttm=cfo_f, total_assets_t=meta.get(TOTAL_ASSETS), total_assets_prev=ta_prev,
+        period_end_t=t_bs, ni_period_end=ni_pe, cfo_period_end=cfo_pe,
+        flags=frozenset(f_flags))
+    details = {"e_period_end_4q": f4.period_end.isoformat() if f4 is not None else None,
+               "e_period_end_8q": _f8.period_end.isoformat() if _f8 is not None else None,
+               "e_ni_ttm_prior": ni_p, "e_gp_ttm": gp, "e_gp_ttm_prior": gp_p,
+               "e_rev_ttm": rev, "e_rev_ttm_prior": rev_p, "e_ta_4q": d4.get(TOTAL_ASSETS),
+               "e_ta_8q": d8.get(TOTAL_ASSETS), "f_total_assets_prev": ta_prev,
+               "f_period_end_prev": fp.period_end.isoformat() if fp is not None else None}
+    return e_inp, f_inp, details
 
 
 def _run_model_c(con, as_of, universe, secs, inputs, a_results, details, eligibility, bars):

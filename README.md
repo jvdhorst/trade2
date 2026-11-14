@@ -144,6 +144,8 @@ Fetch history is in the `fetch_log` table.
 For SEC EDGAR in production, set `VALUATION_SEC_USER_AGENT="<app> <contact email>"`, as SEC's fair-access policy asks.
 
 ## Nightly updates (local workstation)
+**Recommended:** schedule [`scripts/nightly_update.sh`](scripts/nightly_update.sh) (Linux/macOS) or [`scripts/nightly_update.ps1`](scripts/nightly_update.ps1) (Windows). They ingest both universes and run `valuation value`, with a lock file, one retry, logs in `logs/` and no backtests. Setup for cron, systemd, launchd and Task Scheduler: [`docs/ops/nightly_update.md`](docs/ops/nightly_update.md). The one-liners below are a minimal alternative without those safeguards.
+
 Run the incremental update on weekdays after the market close and Yahoo's settlement, around **19:30 America/Toronto**.
 Prices update every run. Fundamentals and profiles refresh only when due, so a normal night takes a few minutes. Before
 the first scheduled run (and after new data fields are added, e.g. Model G), run once by hand:
@@ -164,8 +166,7 @@ schtasks /Create /TN "trade2 nightly" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 19:3
 
 **Check that it ran:** look at `logs/nightly.log`, the newest `reports/<date>/` folder, and the `fetch_log` table in
 `data/valuation.duckdb`. The nightly job runs ingest and valuation only; it never runs a backtest or touches the
-holdout. Fuller scripts (lock file, retry on Yahoo HTTP 429, log rotation, systemd/launchd templates) are planned in
-`docs/ops/nightly_update.md`.
+holdout.
 
 ## Data sources
 | Data | Source |
@@ -204,11 +205,5 @@ universe/     reference.csv                    14-ticker initial-testing subset 
               insurer_csm.csv                  manual insurer CSM after tax (Model A/B input)
               benchmarks.csv                   benchmark keys/symbols/roles (spec benchmarks.md)
 ```
-
-## Nightly updates
-To refresh market data automatically every weekday evening on your own machine (Linux, macOS or Windows), schedule
-[`scripts/nightly_update.sh`](scripts/nightly_update.sh) or [`scripts/nightly_update.ps1`](scripts/nightly_update.ps1).
-They ingest both universes and run `valuation value`, with a lock, one retry, logs in `logs/` and no backtests.
-Setup for cron, systemd, launchd and Task Scheduler: [`docs/ops/nightly_update.md`](docs/ops/nightly_update.md).
 
 *Not investment advice.*
